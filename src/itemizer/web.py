@@ -260,9 +260,9 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                               f'<button>Disconnect</button></form>') if s.connected() else ""
                 cards.append(f'<div class="card"><div class="grow"><b>{html.escape(s.title or s.name)}</b> · {badge}</div>'
                              f'<a href="connect/{s.name}{"" if s.login_fields else "/live"}"><button class="primary">{btn}</button></a> {disconnect}</div>')
-            webhook = "configured" if notifier.url else "not configured (set NOTIFY_WEBHOOK_URL)"
+            apprise_state = "configured" if notifier.configured else "not configured (set APPRISE_URL)"
             cards.append(f'<div class="card"><div class="grow"><b>Notifications</b> · '
-                         f'<span class="muted">webhook {webhook}</span></div>'
+                         f'<span class="muted">Apprise {apprise_state}</span></div>'
                          f'<form class="inline" method="post" action="notify/test"><button>Send test</button></form></div>')
 
             mode = "Dry run: nothing is written to Sure" if dry_run else "Live: writing to Sure"
@@ -322,7 +322,7 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                 threading.Thread(target=_safe_run, args=(runner,), daemon=True).start()
                 return self._redirect("./")
             if path == "/notify/test":
-                notifier.send("test", "Sure Itemizer: test notification. Webhooks are working.")
+                notifier.send("test", "Test notification: Apprise is working.")
                 return self._redirect("../")
             if len(parts) == 2 and parts[0] == "disconnect" and parts[1] in by_name:
                 by_name[parts[1]].logout()

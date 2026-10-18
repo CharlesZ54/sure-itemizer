@@ -1,4 +1,4 @@
-"""Interactive login, login-required handling and webhook notifications."""
+"""Interactive login, login-required handling and Apprise notifications."""
 import json
 import re
 import threading
@@ -49,7 +49,8 @@ class Webhook:
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
-        self.url = f"http://127.0.0.1:{self.server.server_port}/hook"
+        # Apprise's generic JSON webhook, pointed at this little server.
+        self.url = f"json://127.0.0.1:{self.server.server_port}/hook"
 
 
 class OtpSource(Source):
@@ -96,11 +97,11 @@ class FakeSure:
         return [SureTxn("t1", date.today(), 1000, "SHOP #1", None, "acc", "Card", None)]
 
 
-def make_runner(tmp_path, source, webhook_url=None):
+def make_runner(tmp_path, source, apprise_url=None):
     cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30,
                  run_times=("07:30",), run_on_start=False, web_port=0, data_dir=tmp_path, sources=("shop",))
     state = State(tmp_path / "t.db")
-    notifier = Notifier(webhook_url, "http://nas:8686", state)
+    notifier = Notifier(apprise_url, "http://nas:8686", state)
     return Runner(cfg, FakeSure(), [source], state, notifier), state, notifier
 
 
@@ -148,8 +149,8 @@ class TestLoginRequired:
         runner.run()
         assert len(hook.calls) == 1
         call = hook.calls[0]
-        assert call["event"] == "login_required" and call["source"] == "shop"
-        assert "http://nas:8686" in call["content"] and call["content"] == call["text"]
+        assert call["title"] == "Sure Itemizer" and call["type"] == "warning"
+        assert "Shop needs you to sign in" in call["message"] and "http://nas:8686" in call["message"]
 
         # Reconnecting clears the flag; the next expiry notifies again.
         source.session = "cookie"
@@ -159,13 +160,13 @@ class TestLoginRequired:
         runner.run()
         assert len(hook.calls) == 2
 
-    def test_without_webhook_it_just_records(self, tmp_path):
+    def test_without_apprise_it_just_records(self, tmp_path):
         runner, state, _ = make_runner(tmp_path, OtpSource())
         runner.run()
         assert state.flag("login_required:shop")
 
-    def test_failed_webhook_is_retried_next_run(self, tmp_path):
-        runner, state, _ = make_runner(tmp_path, OtpSource(), "http://127.0.0.1:9/nothing-listens")
+    def test_failed_delivery_is_retried_next_run(self, tmp_path):
+        runner, state, _ = make_runner(tmp_path, OtpSource(), "json://127.0.0.1:9/nothing-listens")
         runner.run()
         assert not state.flag("login_required:shop")
 
@@ -306,3 +307,22 @@ def test_trailing_slash_addresses_redirect_to_the_canonical_page(tmp_path):
         opener.open(f"http://127.0.0.1:{server.server_port}/connect/shop/?x=1")
     assert e.value.code == 303 and e.value.headers["Location"] == "/connect/shop?x=1"
     server.shutdown()
+
+
+class TestApprise:
+    def test_test_button_sends_an_info_notification(self, tmp_path):
+        hook = Webhook()
+        runner, state, notifier = make_runner(tmp_path, OtpSource(), hook.url)
+        assert notifier.configured and notifier.send("test", "Test notification: Apprise is working.")
+        assert hook.calls[0]["type"] == "info" and hook.calls[0]["message"].startswith("Test notification")
+
+    def test_several_urls_all_get_it(self, tmp_path):
+        a, b = Webhook(), Webhook()
+        _, _, notifier = make_runner(tmp_path, OtpSource(), f"{a.url}, {b.url}")
+        notifier.send("login_required", "hello")
+        assert len(a.calls) == 1 and len(b.calls) == 1
+
+    def test_a_bad_url_turns_notifications_off_without_crashing(self, tmp_path, caplog):
+        _, state, notifier = make_runner(tmp_path, OtpSource(), "definitely-not-a-service://whatever")
+        assert not notifier.configured and not notifier.send("test", "x")
+        assert "definitely-not-a-service" not in caplog.text  # URLs carry tokens; never logged

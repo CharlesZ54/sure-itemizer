@@ -36,7 +36,7 @@ Open the status page, go to **Integrations → Amazon → Connect**, and sign in
 
 - **Your email and password are used once and thrown away.** They aren't configuration, and they aren't written anywhere. The only thing kept is the session Amazon issues (`/data/amazon/cookies.json`, mode 600), the same thing your browser keeps when you tick "Keep me signed in".
 - **No authenticator secret is ever needed.** Two-step verification keeps working as intended.
-- **Scheduled runs never sign in on their own.** When Amazon ends the session, the run stops, the page shows *Sign-in needed*, and `NOTIFY_WEBHOOK_URL` gets **one** notification. Click **Reconnect** to sign in again, and it catches up straight away.
+- **Scheduled runs never sign in on their own.** When Amazon ends the session, the run stops, the page shows *Sign-in needed*, and you get **one** notification (`APPRISE_URL`). Click **Reconnect** to sign in again, and it catches up straight away.
 
 The page is plain HTTP, so your Amazon password crosses your LAN unencrypted when you connect. If that matters, reach it over HTTPS, for example with `tailscale serve`.
 
@@ -55,14 +55,14 @@ The live view is also available on its own from either Connect page (*Or sign in
 
 ## Notifications
 
-Set `NOTIFY_WEBHOOK_URL` and the service POSTs JSON when a merchant needs you to sign in again (`login_required`) or a run fails (`run_failed`). Each is sent once until the problem clears. The body works as-is for Discord (`content`) and Slack/Mattermost (`text`), and carries the details for Home Assistant, n8n and the like:
+Notifications go through [Apprise](https://github.com/caronc/apprise), so they can land in Discord, ntfy, Pushover, Telegram, Home Assistant, email, a plain JSON webhook and [many more](https://github.com/caronc/apprise/wiki). Set `APPRISE_URL` to one or more Apprise URLs, separated by commas:
 
-```json
-{"event": "login_required", "source": "amazon", "message": "...", "url": "http://…:8686",
- "time": "2026-01-01T12:00:00+00:00", "content": "...", "text": "..."}
+```
+APPRISE_URL=discord://webhook_id/webhook_token
+APPRISE_URL=ntfys://my-topic, mailtos://user:pass@example.com
 ```
 
-**Integrations → Notifications → Send test** checks the hookup.
+You'll hear about it when a merchant needs you to sign in again, and when a run fails, once per problem until it clears. Messages carry the status page link (`PUBLIC_URL`). **Integrations → Notifications → Send test** checks the setup. Apprise's own logging is silenced, because it would print the URLs, tokens included. If a URL can't be parsed, the log says so without showing it.
 
 ## Configuration
 
@@ -76,7 +76,7 @@ Set `NOTIFY_WEBHOOK_URL` and the service POSTs JSON when a merchant needs you to
 | `RUN_TIMES` | `07:30` | Comma-separated local times (`TZ`) |
 | `RUN_ON_START` | `true` | |
 | `WEB_PORT` | `8686` | Status page |
-| `NOTIFY_WEBHOOK_URL` | — | Where to POST notifications |
+| `APPRISE_URL` | — | Where to send notifications (Apprise URLs, comma-separated) |
 | `PUBLIC_URL` | — | How you reach the status page; linked from notifications |
 | `AMZN_CARD_LAST4` | — | Only use Amazon charges paid with this card |
 | `AMZN_SURE_ACCOUNT` | — | Only look at this Sure account (id or part of its name) |

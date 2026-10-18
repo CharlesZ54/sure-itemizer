@@ -27,7 +27,7 @@ class Config:
     web_port: int
     data_dir: Path
     sources: tuple[str, ...]
-    notify_webhook_url: str | None = None
+    apprise_url: str | None = None
     # Where the user reaches the status page; put in notifications as a link.
     public_url: str | None = None
 
@@ -57,7 +57,7 @@ class Config:
             web_port=int(_env("WEB_PORT", "8686")),
             data_dir=Path(_env("DATA_DIR", "/data")),
             sources=tuple(s.strip().lower() for s in _env("SOURCES", "amazon").split(",") if s.strip()),
-            notify_webhook_url=_env("NOTIFY_WEBHOOK_URL"),
+            apprise_url=_env("APPRISE_URL"),
             public_url=(_env("PUBLIC_URL") or "").rstrip("/") or None,
             amazon_card_last4=_env("AMZN_CARD_LAST4"),
             amazon_sure_account=_env("AMZN_SURE_ACCOUNT"),

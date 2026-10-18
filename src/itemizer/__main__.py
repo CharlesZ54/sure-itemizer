@@ -56,7 +56,7 @@ def main(argv: list[str]) -> int:
 
     cfg = Config.from_env()
     state = State(cfg.data_dir / "itemizer.db")
-    notifier = Notifier(cfg.notify_webhook_url, cfg.public_url, state)
+    notifier = Notifier(cfg.apprise_url, cfg.public_url, state)
 
     if cmd == "status":
         for r in state.plans():

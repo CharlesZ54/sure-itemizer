@@ -48,7 +48,7 @@ class Runner:
                     log.warning("%s: login required: %s", source.name, e)
                     tally[f"{source.name}_login_required"] += 1
                     self.notifier.once(login_flag(source), "login_required",
-                                       f"Sure Itemizer: {source.title or source.name} needs you to sign in "
+                                       f"{source.title or source.name} needs you to sign in "
                                        f"({e}). Open the status page and click Connect.", source.name)
             summary = {"dry_run": self.cfg.dry_run, **tally}
             self.state.finish_run(run_id, summary)
@@ -58,7 +58,7 @@ class Runner:
         except Exception as e:
             log.exception("run failed")
             self.state.finish_run(run_id, dict(tally), error=str(e))
-            self.notifier.once("run_failed", "run_failed", f"Sure Itemizer run failed: {e}")
+            self.notifier.once("run_failed", "run_failed", f"A run failed: {e}")
             raise
         finally:
             _run_lock.release()

@@ -12,6 +12,7 @@ requires-python = ">=3.12"
 dependencies = [
   "amazon-orders[browser]==4.9.3",
   "requests>=2.32",
+  "apprise>=2.0,<3",
 ]
 
 [project.optional-dependencies]
