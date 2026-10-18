@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sure-itemizer"
+version = "0.1.0"
+description = "Split merchant charges in Sure (we-promise/sure) into the items they paid for, so Sure's AI can categorize each one."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+  "amazon-orders==4.9.3",
+  "requests>=2.32",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+itemizer = "itemizer.__main__:_cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
