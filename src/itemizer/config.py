@@ -37,6 +37,10 @@ class Config:
     amazon_sure_account: str | None = None
     amazon_domain: str | None = None
 
+    def source_setting(self, prefix: str, key: str, default: str | None = None) -> str | None:
+        """A merchant's own setting, read from {PREFIX}_{KEY} (e.g. TARGET_SURE_ACCOUNT)."""
+        return _env(f"{prefix}_{key}", default)
+
     @classmethod
     def from_env(cls) -> "Config":
         sure_url = _env("SURE_URL")

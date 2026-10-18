@@ -11,10 +11,12 @@ Matching, apportioning, planning and writing to Sure are shared, so a new
 source (Venmo, another retailer, ...) only has to turn its merchant's data into
 Purchases.
 
-A source that needs the user to sign in also sets `login_fields` and
-implements `login`/`logout`/`connected`. The web UI then offers a Connect
-page for it, and scheduled runs never sign in on their own: they raise
-`LoginRequired`, which notifies the user once.
+A source that needs the user to sign in implements `connected`/`logout` and
+either `login_fields`+`login` (the service signs in, relaying questions) or
+`live_url`+`live_save` (the user signs in on the merchant's page through a
+live browser view). The web UI offers a Connect page for it, and scheduled
+runs never sign in on their own: they raise `LoginRequired`, which notifies
+the user once.
 """
 from __future__ import annotations
 
@@ -67,7 +69,28 @@ class Source(ABC):
         user has to sign in.
         """
 
-    # Interactive login (only for sources with login_fields).
+    # Signing in -------------------------------------------------------
+    #
+    # Two ways, a source may offer either or both:
+    # - login_fields + login(): the service signs in for the user and relays
+    #   any questions (codes, captchas) to the web UI.
+    # - live_url + live_save(): the user signs in themselves on the merchant's
+    #   own page, through a live view of a browser in the container.
+
+    #: Where the live browser opens for the user to sign in.
+    live_url: str | None = None
+    #: User agent for the live browser (None: a normal desktop Chrome).
+    live_user_agent: str | None = None
+    #: Script run in every page before the merchant's own (e.g. to hide passkeys).
+    live_init_script: str | None = None
+
+    def live_signed_in(self, context: Any) -> bool:
+        """True once the browser is signed in, so the live view can finish on its own."""
+        return False
+
+    def live_save(self, context: Any) -> None:
+        """Keep the signed-in browser's session for scheduled runs."""
+        raise NotImplementedError
 
     def connected(self) -> bool:
         return True

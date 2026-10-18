@@ -236,3 +236,57 @@ class TestAmazonSession:
             AmazonSource(tmp_path / "amazon").login({"email": "", "password": ""}, None)
 
 
+
+
+class LiveSource(OtpSource):
+    name, title = "live", "Live Shop"
+    login_fields = []
+    live_url = "http://127.0.0.1:9/never-opened"
+
+
+class TestLiveViewRoutes:
+    def test_card_links_to_live_view_and_page_renders(self, tmp_path):
+        source = LiveSource()
+        runner, state, notifier = make_runner(tmp_path, source)
+        server = serve(0, state, runner, notifier, [source], dry_run=True)
+        base = f"http://127.0.0.1:{server.server_port}"
+        home = urllib.request.urlopen(base + "/").read().decode()
+        assert 'href="connect/live/live"' in home
+        live_page = urllib.request.urlopen(base + "/connect/live/live").read().decode()
+        assert "I&#x27;m signed in" in live_page or "I'm signed in" in live_page
+        snap = json.loads(urllib.request.urlopen(base + "/connect/live/live/state").read())
+        assert snap["state"] == "idle"
+        assert urllib.request.urlopen(base + "/connect/live/live/frame.jpg").status == 204
+        server.shutdown()
+
+    def test_password_sources_link_to_the_live_fallback(self, tmp_path):
+        source = OtpSource()
+        source.live_url = "http://127.0.0.1:9/never-opened"
+        runner, state, notifier = make_runner(tmp_path, source)
+        server = serve(0, state, runner, notifier, [source], dry_run=True)
+        page_ = urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/connect/shop").read().decode()
+        assert 'href="shop/live"' in page_
+        server.shutdown()
+
+
+class TestTargetSource:
+    def test_claims_target_debit_pulls_only(self, tmp_path):
+        from datetime import date
+
+        from itemizer.models import SureTxn
+        from itemizer.sources.target import TargetSource
+
+        t = TargetSource(tmp_path / "target")
+        txn = lambda name: SureTxn("x", date.today(), 100, name, None, "acc", "Checking", None)
+        assert t.claims(txn("Target - ACH: TARGET DEBIT CRD"))
+        assert not t.claims(txn("Targeted Ads LLC"))
+
+    def test_not_connected_until_a_session_is_saved(self, tmp_path):
+        from datetime import date
+
+        from itemizer.sources.target import TargetSource
+
+        t = TargetSource(tmp_path / "target")
+        assert not t.connected()
+        with pytest.raises(LoginRequired):
+            t.fetch(date.today())

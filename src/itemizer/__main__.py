@@ -4,6 +4,7 @@
   itemizer run             do one run now and exit
   itemizer login SOURCE    sign in to a merchant from the console (the web UI's Connect is easier)
   itemizer status          print what has been planned/applied
+  itemizer probe SOURCE    record a merchant's own order data (to build its parser)
 """
 from __future__ import annotations
 
@@ -82,6 +83,14 @@ def main(argv: list[str]) -> int:
         source.login(fields, ConsoleIO())
         notifier.clear(login_flag(source))
         print(f"{source.name}: signed in; session saved")
+        return 0
+
+    if cmd == "probe":
+        by_name = {s.name: s for s in sources if hasattr(s, "probe")}
+        if len(argv) < 2 or argv[1] not in by_name:
+            print(f"usage: itemizer probe {{{','.join(by_name)}}}")
+            return 2
+        print(f"saved to {by_name[argv[1]].probe()}")
         return 0
 
     runner = Runner(cfg, SureClient(cfg.sure_url, cfg.sure_api_key), sources, state, notifier)

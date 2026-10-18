@@ -40,6 +40,14 @@ Open the status page, go to **Integrations → Amazon → Connect**, and sign in
 
 The page is plain HTTP, so your Amazon password crosses your LAN unencrypted when you connect. If that matters, reach it over HTTPS, for example with `tailscale serve`.
 
+## Connecting Target
+
+Target's sign-in changes between a password and one-time codes and sits behind bot protection, so you sign in yourself: **Integrations → Target → Connect** opens a live view of a browser running in the container, on Target's own page. Click and type as usual (on a phone, use the *Type here* box). When you're signed in, press **I'm signed in**. Only the browser's session is kept (`/data/target/state.json`, mode 600).
+
+Target links purchases made with a Target Circle Card to your account, in-store ones included. In the bank they show up as `TARGET DEBIT CRD` pulls a day or few after the purchase.
+
+The same live view is a fallback for Amazon: its Connect page has an *Or sign in yourself…* link.
+
 ## Notifications
 
 Set `NOTIFY_WEBHOOK_URL` and the service POSTs JSON when a merchant needs you to sign in again (`login_required`) or a run fails (`run_failed`). Each is sent once until the problem clears. The body works as-is for Discord (`content`) and Slack/Mattermost (`text`), and carries the details for Home Assistant, n8n and the like:
@@ -68,6 +76,7 @@ Set `NOTIFY_WEBHOOK_URL` and the service POSTs JSON when a merchant needs you to
 | `AMZN_CARD_LAST4` | — | Only use Amazon charges paid with this card |
 | `AMZN_SURE_ACCOUNT` | — | Only look at this Sure account (id or part of its name) |
 | `AMZN_DOMAIN` | `amazon.com` | Other Amazon marketplaces are untested |
+| `TARGET_SURE_ACCOUNT` | — | Only look at this Sure account for Target |
 
 The Amazon variables are `AMZN_*`, not `AMAZON_*`, because the `amazon-orders` library reads every `AMAZON_*` variable as its own setting.
 
@@ -77,6 +86,7 @@ The Amazon variables are `AMZN_*`, not `AMAZON_*`, because the `amazon-orders` l
 docker exec -it sure-itemizer itemizer login amazon   # sign in from a console instead of the web UI
 docker exec sure-itemizer itemizer run                # one run now
 docker exec sure-itemizer itemizer status             # what was planned/applied
+docker exec sure-itemizer itemizer probe target       # record Target's own order data (development)
 ```
 
 ## Adding a merchant

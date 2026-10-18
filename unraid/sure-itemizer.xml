@@ -9,7 +9,7 @@
   <Support>https://github.com/CharlesZ54/sure-itemizer/issues</Support>
   <Project>https://github.com/CharlesZ54/sure-itemizer</Project>
   <ReadMe>https://github.com/CharlesZ54/sure-itemizer#readme</ReadMe>
-  <Overview>Splits merchant charges in Sure (we-promise/sure) into the items they paid for, so Sure's AI categorizer can categorize each item. Amazon is supported now; other merchants plug in as sources.&#xD;
+  <Overview>Splits merchant charges in Sure (we-promise/sure) into the items they paid for, so Sure's AI categorizer can categorize each item. Amazon and Target are supported; other merchants plug in as sources.&#xD;
 &#xD;
 Starts in DRY RUN: it shows the splits it would make on its status page and writes nothing to Sure until you set DRY_RUN=false. Splitting needs Sure v0.7.6 or newer.&#xD;
 &#xD;
@@ -30,5 +30,5 @@ Connect Amazon from the web UI: your email and password are used once to sign in
   <Config Name="Sure account filter" Target="AMZN_SURE_ACCOUNT" Default="" Mode="" Description="Optional: Sure account id, or part of its name, holding the Amazon charges" Type="Variable" Display="always" Required="false" Mask="false"/>
   <Config Name="Run times" Target="RUN_TIMES" Default="07:30" Mode="" Description="Comma-separated local times to run daily" Type="Variable" Display="advanced" Required="false" Mask="false">07:30</Config>
   <Config Name="Lookback days" Target="LOOKBACK_DAYS" Default="30" Mode="" Description="How far back to look for unprocessed transactions" Type="Variable" Display="advanced" Required="false" Mask="false">30</Config>
-  <Config Name="Sources" Target="SOURCES" Default="amazon" Mode="" Description="Comma-separated merchant sources" Type="Variable" Display="advanced" Required="false" Mask="false">amazon</Config>
+  <Config Name="Sources" Target="SOURCES" Default="amazon" Mode="" Description="Comma-separated merchant sources: amazon, target" Type="Variable" Display="advanced" Required="false" Mask="false">amazon</Config>
 </Container>

@@ -17,6 +17,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlencode
 
 from ..config import Config
 from ..models import Line, Purchase
@@ -284,6 +285,45 @@ class AmazonSource(Source):
                 os.chmod(self.cookie_path, 0o600)
             self._session = session
         log.info("amazon: signed in; session saved")
+
+    # Fallback: the user signs in themselves in the live browser view.
+
+    def _constants(self):
+        from amazonorders.conf import AmazonOrdersConfig
+
+        data = {"domain": self.domain} if self.domain else None
+        return AmazonOrdersConfig(config_path=str(self.data_dir / "config.yml"), data=data).constants
+
+    @property
+    def live_url(self) -> str:
+        c = self._constants()
+        return f"{c.SIGN_IN_URL}?{urlencode(c.SIGN_IN_QUERY_PARAMS)}"
+
+    @property
+    def live_user_agent(self) -> str:
+        # The session continues outside the browser with this identity.
+        return self._constants().BASE_HEADERS.get("User-Agent")
+
+    @property
+    def live_init_script(self) -> str:
+        from .amazon_browser import NO_PASSKEYS
+
+        return NO_PASSKEYS
+
+    def live_signed_in(self, context) -> bool:
+        return any(c["name"] == "x-main" and "amazon." in c["domain"] for c in context.cookies())
+
+    def live_save(self, context) -> None:
+        from .amazon_browser import HeadlessSignIn
+
+        with self._lock:
+            session = self._new_session()
+            handover = HeadlessSignIn(session, None)
+            handover._harvest_cookies(context)
+            handover._verify_session()  # persists the cookies once Amazon accepts them
+            if self.cookie_path.exists():
+                os.chmod(self.cookie_path, 0o600)
+            self._session = session
 
     def logout(self) -> None:
         with self._lock:

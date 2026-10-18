@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from .auth import LoginFlow
+from .livebrowser import LiveBrowser
 from .notify import Notifier
 from .runner import Runner, login_flag
 from .sources import Source
@@ -38,6 +39,9 @@ label{display:block;margin:10px 0 4px;font-weight:600}
 .card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .card .grow{flex:1;min-width:200px} form.inline{display:inline}
 .panel{border:1px solid var(--line);border-radius:12px;padding:16px;max-width:520px}
+.bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:10px 0}
+#screen{max-width:1100px;border:1px solid var(--line);border-radius:8px;overflow:hidden;outline:none;background:#fff}
+#screen:focus{border-color:var(--accent)} #frame{display:block;width:100%;height:auto;cursor:pointer;min-height:200px}
 """
 
 
@@ -96,16 +100,63 @@ poll();
 """
 
 
+LIVE_JS = """
+<script>
+const base = location.pathname.replace(/\\/$/, "");
+const img = document.getElementById("frame"), screenEl = document.getElementById("screen");
+const statusEl = document.getElementById("status"), typed = document.getElementById("typed");
+let shownAt = 0, finished = false;
+const post = (path, body) => fetch(base + path, {method: "POST", headers: {"Content-Type": "application/json"},
+                                                  body: JSON.stringify(body || {})});
+const input = cmd => post("/input", cmd);
+img.addEventListener("click", e => {
+  screenEl.focus();
+  input({type: "click", x: e.offsetX / img.clientWidth, y: e.offsetY / img.clientHeight});
+});
+screenEl.addEventListener("wheel", e => { e.preventDefault(); input({type: "scroll", dy: e.deltaY}); }, {passive: false});
+const SPECIAL = new Set(["Enter","Tab","Backspace","Delete","Escape","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"]);
+screenEl.addEventListener("keydown", e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key.length === 1) { input({type: "text", text: e.key}); e.preventDefault(); }
+  else if (SPECIAL.has(e.key)) { input({type: "key", key: e.key}); e.preventDefault(); }
+});
+screenEl.addEventListener("paste", e => { input({type: "text", text: e.clipboardData.getData("text")}); e.preventDefault(); });
+document.getElementById("send").onclick = () => { if (typed.value) input({type: "text", text: typed.value}); typed.value = ""; };
+document.getElementById("enter").onclick = () => { if (typed.value) input({type: "text", text: typed.value}); typed.value = ""; input({type: "key", key: "Enter"}); };
+document.getElementById("bksp").onclick = () => input({type: "key", key: "Backspace"});
+document.getElementById("back").onclick = () => input({type: "back"});
+document.getElementById("done").onclick = () => input({type: "done"});
+document.getElementById("cancel").onclick = () => input({type: "cancel"});
+async function tick() {
+  if (finished) return;
+  try {
+    const s = await (await fetch(base + "/state")).json();
+    if (s.state === "running" || s.state === "starting") {
+      statusEl.textContent = s.state === "starting" ? "Starting the browser…" : "Click into the page to type.";
+      if (s.frame_at && s.frame_at !== shownAt) { shownAt = s.frame_at; img.src = base + "/frame.jpg?t=" + s.frame_at; }
+    } else if (s.state === "saving") { statusEl.textContent = "Saving the session…"; }
+    else if (s.state === "done") { finished = true; statusEl.innerHTML = '<span class="ok">Connected.</span> <a href="../../">Back to status</a>'; }
+    else if (s.state === "failed") { finished = true; statusEl.innerHTML = '<span class="bad"></span> <a href="">Start again</a>'; statusEl.firstChild.textContent = s.error || "Closed"; }
+  } catch (e) {}
+  setTimeout(tick, 400);
+}
+post("/start").then(tick);
+</script>
+"""
+
+
 def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list[Source],
-                 flows: dict[str, LoginFlow], dry_run: bool, setup_error: str | None):
+                 flows: dict[str, LoginFlow], dry_run: bool, setup_error: str | None,
+                 lives: dict[str, LiveBrowser] | None = None):
+    lives = lives or {}
     by_name = {s.name: s for s in sources}
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):  # never log bodies; paths only, quietly
             log.debug(fmt, *args)
 
-        def _send(self, code: int, body: str, ctype: str = "text/html; charset=utf-8") -> None:
-            data = body.encode()
+        def _send(self, code: int, body: str | bytes, ctype: str = "text/html; charset=utf-8") -> None:
+            data = body if isinstance(body, bytes) else body.encode()
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
@@ -139,11 +190,21 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             if path == "/":
                 return self._send(200, self._status_page())
             if len(parts) >= 2 and parts[0] == "connect" and parts[1] in by_name:
-                flow = flows[parts[1]]
-                if len(parts) == 3 and parts[2] == "state":
+                source = by_name[parts[1]]
+                if len(parts) >= 3 and parts[2] == "live" and source.name in lives:
+                    live = lives[source.name]
+                    if len(parts) == 3:
+                        return self._send(200, self._live_page(source))
+                    if parts[3] == "state":
+                        return self._send(200, json.dumps(live.snapshot()), "application/json")
+                    if parts[3] == "frame.jpg":
+                        frame = live.latest_frame()
+                        return self._send(200, frame, "image/jpeg") if frame else self._send(204, "")
+                flow = flows.get(source.name)
+                if flow and len(parts) == 3 and parts[2] == "state":
                     return self._send(200, json.dumps(flow.snapshot()), "application/json")
-                if len(parts) == 2:
-                    return self._send(200, self._connect_page(by_name[parts[1]], flow))
+                if flow and len(parts) == 2:
+                    return self._send(200, self._connect_page(source, flow))
             self._send(404, "not found", "text/plain")
 
         def _status_page(self) -> str:
@@ -175,7 +236,7 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
 
             cards = []
             for s in sources:
-                if not s.login_fields:
+                if not (s.login_fields or s.name in lives):
                     continue
                 if not s.connected():
                     badge, btn = '<span class="muted">Not connected</span>', "Connect"
@@ -186,7 +247,7 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                 disconnect = (f'<form class="inline" method="post" action="disconnect/{s.name}">'
                               f'<button>Disconnect</button></form>') if s.connected() else ""
                 cards.append(f'<div class="card"><div class="grow"><b>{html.escape(s.title or s.name)}</b> · {badge}</div>'
-                             f'<a href="connect/{s.name}"><button class="primary">{btn}</button></a> {disconnect}</div>')
+                             f'<a href="connect/{s.name}{"" if s.login_fields else "/live"}"><button class="primary">{btn}</button></a> {disconnect}</div>')
             webhook = "configured" if notifier.url else "not configured (set NOTIFY_WEBHOOK_URL)"
             cards.append(f'<div class="card"><div class="grow"><b>Notifications</b> · '
                          f'<span class="muted">webhook {webhook}</span></div>'
@@ -216,8 +277,26 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                 inner = (f'<form method="post">{fields}<p><button class="primary">Sign in</button></p></form>'
                          f'<p class="muted">Used once to sign in, then discarded. Only the session {title} issues '
                          f'is kept. If {title} asks for a verification code, you\'ll be prompted here.</p>')
+                if source.name in lives:
+                    inner += (f'<p><a href="{source.name}/live">Or sign in yourself on {title}\'s own page, '
+                              f'in a live browser view →</a></p>')
             return page(f"Connect {title}", f'<p><a href="../">← Status</a></p><h1>Connect {title}</h1>'
                                             f'<div class="panel">{inner}</div>')
+
+        def _live_page(self, source: Source) -> str:
+            title = html.escape(source.title or source.name)
+            body = (f'<p><a href="../../">← Status</a></p><h1>Sign in to {title}</h1>'
+                    f'<p class="muted">This is a browser running inside the container, on {title}\'s own page. '
+                    f'Click and type as usual. Nothing you type is stored; once you\'re signed in, only the '
+                    f'session {title} gives the browser is kept.</p>'
+                    '<div class="bar"><button id="back">Back</button> <button id="done" class="primary">'
+                    'I\'m signed in</button> <button id="cancel">Cancel</button> <span id="status" class="muted">'
+                    'Starting the browser…</span></div>'
+                    '<div id="screen" tabindex="0"><img id="frame" alt=""></div>'
+                    '<div class="bar"><input id="typed" placeholder="On a phone? Type here, then Send" '
+                    'autocomplete="off" autocapitalize="off"> <button id="send">Send</button> '
+                    '<button id="enter">Enter ↵</button> <button id="bksp">⌫</button></div>' + LIVE_JS)
+            return page(f"Sign in to {title}", body)
 
         # POST -----------------------------------------------------------
 
@@ -236,7 +315,22 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             if len(parts) == 2 and parts[0] == "disconnect" and parts[1] in by_name:
                 by_name[parts[1]].logout()
                 return self._redirect("../")
-            if len(parts) >= 2 and parts[0] == "connect" and parts[1] in by_name:
+            if (len(parts) == 4 and parts[0] == "connect" and parts[2] == "live" and parts[1] in by_name
+                    and parts[1] in lives):
+                source, live = by_name[parts[1]], lives[parts[1]]
+                try:
+                    if parts[3] == "start":
+                        live.start(source.live_url, source.live_signed_in, source.live_save,
+                                   user_agent=source.live_user_agent, init_script=source.live_init_script,
+                                   on_success=lambda: _connected(source))
+                        return self._send(204, "")
+                    if parts[3] == "input":
+                        n = int(self.headers.get("Content-Length") or 0)
+                        live.send(json.loads(self.rfile.read(n) or b"{}"))
+                        return self._send(204, "")
+                except (RuntimeError, ValueError) as e:
+                    return self._send(409, str(e), "text/plain")
+            if len(parts) >= 2 and parts[0] == "connect" and parts[1] in flows:
                 source, flow = by_name[parts[1]], flows[parts[1]]
                 form = self._form()
                 try:
@@ -272,7 +366,8 @@ def _safe_run(runner: Runner) -> None:
 def serve(port: int, state: State, runner: Runner, notifier: Notifier, sources: list[Source],
           dry_run: bool, setup_error: str | None = None) -> ThreadingHTTPServer:
     flows = {s.name: LoginFlow() for s in sources if s.login_fields}
-    handler = make_handler(state, runner, notifier, sources, flows, dry_run, setup_error)
+    lives = {s.name: LiveBrowser() for s in sources if s.live_url}
+    handler = make_handler(state, runner, notifier, sources, flows, dry_run, setup_error, lives)
     server = ThreadingHTTPServer(("0.0.0.0", port), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info("status page on :%d", port)

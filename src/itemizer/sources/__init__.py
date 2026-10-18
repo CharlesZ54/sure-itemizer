@@ -12,9 +12,16 @@ def _amazon(cfg: Config) -> Source:
     return AmazonSource.from_config(cfg)
 
 
+def _target(cfg: Config) -> Source:
+    from .target import TargetSource
+
+    return TargetSource.from_config(cfg)
+
+
 # Register new merchants here: name -> factory(config).
 REGISTRY: dict[str, Callable[[Config], Source]] = {
     "amazon": _amazon,
+    "target": _target,
 }
 
 
