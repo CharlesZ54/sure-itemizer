@@ -40,7 +40,7 @@ label{display:block;margin:10px 0 4px;font-weight:600}
 .card .grow{flex:1;min-width:200px} form.inline{display:inline}
 .panel{border:1px solid var(--line);border-radius:12px;padding:16px;max-width:520px}
 .bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:10px 0}
-tr.f th{padding:2px 4px 8px} tr.f input,tr.f select{width:100%;max-width:none;min-width:70px;padding:4px 6px;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--bg)}
+tr.f th{padding:2px 4px 8px} tr.f .op{display:flex;gap:3px} tr.f .op select{width:auto;min-width:0;flex:none} tr.f input,tr.f select{width:100%;max-width:none;min-width:70px;padding:4px 6px;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--bg)}
 #screen{max-width:1100px;border:1px solid var(--line);border-radius:8px;overflow:hidden;outline:none;background:#fff}
 #screen:focus{border-color:var(--accent)} #frame{display:block;width:100%;height:auto;cursor:pointer;min-height:200px;touch-action:none;user-select:none;-webkit-user-select:none}
 """
@@ -62,34 +62,49 @@ def _detail(row) -> str:
 
 
 # Column filters for the transactions table: a text box matches anywhere in
-# the cell, a dropdown matches the whole cell. Kept in the address bar so a
-# filtered view can be reloaded or bookmarked.
+# the cell, a dropdown matches the whole cell, and date/amount compare with
+# the operator beside them (on/before/after, =/</>). Kept in the address bar
+# so a filtered view can be reloaded or bookmarked.
 FILTER_JS = """
 <script>
 const table = document.getElementById("txns");
 const boxes = [...table.querySelectorAll("tr.f [data-col]")];
+const ops = [...table.querySelectorAll("tr.f [data-op]")];
 const rows = [...table.querySelectorAll("tr.r")];
 const shown = document.getElementById("shown");
+const cmp = {"=": (a, b) => a === b, "<": (a, b) => a < b, ">": (a, b) => a > b,
+             "<=": (a, b) => a <= b, ">=": (a, b) => a >= b};
+function test(box, cell) {
+  const v = box.value.trim().toLowerCase();
+  if (!v) return true;
+  const t = cell.dataset.v ?? cell.textContent.toLowerCase();
+  const op = box.parentElement.querySelector("[data-op]")?.value;
+  if (box.dataset.kind === "number") {
+    const want = parseFloat(v);
+    return isNaN(want) || cmp[op](Math.round(parseFloat(t) * 100), Math.round(want * 100));
+  }
+  if (box.dataset.kind === "date") return cmp[op](t, v);  // ISO dates compare as text
+  return box.tagName === "SELECT" ? t === v : t.includes(v);
+}
 function apply(){
-  const want = boxes.map(b => [+b.dataset.col, b.value.trim().toLowerCase(), b.tagName === "SELECT"]);
   let n = 0;
   for (const r of rows) {
-    const ok = want.every(([c, v, exact]) => {
-      if (!v) return true;
-      const t = r.cells[c].dataset.v ?? r.cells[c].textContent.toLowerCase();
-      return exact ? t === v : t.includes(v);
-    });
+    const ok = boxes.every(b => test(b, r.cells[+b.dataset.col]));
     r.hidden = !ok; n += ok;
   }
   shown.textContent = n === rows.length ? "" : `showing ${n} of ${rows.length}`;
   const q = new URLSearchParams();
   for (const b of boxes) if (b.value) q.set(b.name, b.value);
+  for (const o of ops) if (o.value !== o.options[0].value) q.set(o.name, o.value);
   history.replaceState(null, "", q.toString() ? "?" + q : location.pathname);
   for (const a of document.querySelectorAll("nav a[data-status]"))
     a.classList.toggle("on", a.dataset.status === (table.querySelector("[name=status]").value));
 }
 const q = new URLSearchParams(location.search);
-for (const b of boxes) { if (q.has(b.name)) b.value = q.get(b.name); b.addEventListener("input", apply); }
+for (const b of [...boxes, ...ops]) {
+  if (q.has(b.name)) b.value = q.get(b.name);
+  b.addEventListener("input", apply);
+}
 for (const a of document.querySelectorAll("nav a[data-status]")) a.addEventListener("click", e => {
   e.preventDefault(); table.querySelector("[name=status]").value = a.dataset.status; apply();
 });
@@ -278,7 +293,7 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                     f"<td data-v='{html.escape((r['account'] or '').lower())}'>{html.escape(r['account'] or '')}</td>"
                     f"<td>{html.escape(r['txn_name'] or '')}"
                     f"<div class='muted'>{html.escape(r['reference'] or '')}</div></td>"
-                    f"<td class='n'>${r['txn_amount']}</td><td data-v='{r['status']}'>{r['status'].replace('_', ' ')}</td>"
+                    f"<td class='n' data-v='{r['txn_amount']}'>${r['txn_amount']}</td><td data-v='{r['status']}'>{r['status'].replace('_', ' ')}</td>"
                     f"<td>{what}</td></tr>")
 
             def choose(name: str, col: int, values: dict[str, str]) -> str:
@@ -289,10 +304,21 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             def search(name: str, col: int, hint: str) -> str:
                 return f'<th><input name="{name}" data-col="{col}" placeholder="{hint}" aria-label="{name}"></th>'
 
-            filters = ("<tr class='f'>" + search("date", 0, "2026-10")
+            def compare(name: str, col: int, kind: str, choices: list[tuple[str, str]]) -> str:
+                options = "".join(f'<option value="{html.escape(v)}">{label}</option>' for v, label in choices)
+                box = ('type="date"' if kind == "date"
+                       else 'type="number" step="0.01" placeholder="12.34" inputmode="decimal"')
+                return (f'<th><div class="op"><select name="{name}_op" data-op aria-label="{name} comparison">'
+                        f'{options}</select><input name="{name}" data-col="{col}" data-kind="{kind}" {box} '
+                        f'aria-label="{name}"></div></th>')
+
+            filters = ("<tr class='f'>"
+                       + compare("date", 0, "date", [("=", "on"), ("<", "before"), (">", "after")])
                        + choose("source", 1, {r["source"]: titles.get(r["source"], r["source"]) for r in plans})
                        + choose("account", 2, {(r["account"] or "").lower(): r["account"] or "(none)" for r in plans})
-                       + search("name", 3, "search") + search("amount", 4, "12.34")
+                       + search("name", 3, "search")
+                       + compare("amount", 4, "number",
+                                 [("=", "="), ("<", "&lt;"), (">", "&gt;"), ("<=", "&le;"), (">=", "&ge;")])
                        + choose("status", 5, {r["status"]: r["status"].replace("_", " ") for r in plans})
                        + search("what", 6, "search") + "</tr>") if plans else ""
 

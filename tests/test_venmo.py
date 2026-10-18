@@ -351,4 +351,6 @@ def test_transaction_list_shows_the_source_and_filters_every_column(tmp_path):
     assert "<th>Source</th>" in page and "<td data-v='venmo'>Venmo</td>" in page
     for name in ("date", "source", "account", "name", "amount", "status", "what"):
         assert f'name="{name}"' in page
+    assert 'name="date_op"' in page and '<option value="&lt;">before</option>' in page
+    assert 'name="amount_op"' in page and 'data-kind="number"' in page and "data-v='12.34'" in page
     assert '<option value="venmo">Venmo</option>' in page and '<option value="checking">Checking</option>' in page
