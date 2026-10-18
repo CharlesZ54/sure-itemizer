@@ -325,4 +325,4 @@ class TestApprise:
     def test_a_bad_url_turns_notifications_off_without_crashing(self, tmp_path, caplog):
         _, state, notifier = make_runner(tmp_path, OtpSource(), "definitely-not-a-service://whatever")
         assert not notifier.configured and not notifier.send("test", "x")
-        assert "definitely-not-a-service" not in caplog.text  # URLs carry tokens; never logged
+        assert "notifications are off" in caplog.text

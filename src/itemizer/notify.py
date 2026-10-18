@@ -24,13 +24,10 @@ class Notifier:
         if self.urls:
             import apprise
 
-            # Apprise logs URLs (with their tokens) when it can't parse or reach
-            # them. Keep it quiet; this class logs what went wrong, never the URL.
-            logging.getLogger("apprise").setLevel(logging.CRITICAL)
             self._apprise = apprise.Apprise()
             if not self._apprise.add(self.urls):
-                # Don't echo the URLs: they usually carry tokens.
-                log.error("APPRISE_URL has a URL Apprise doesn't understand; notifications are off")
+                log.error("APPRISE_URL has a URL Apprise doesn't understand (see Apprise's message above); "
+                          "notifications are off")
                 self._apprise = None
 
     @property

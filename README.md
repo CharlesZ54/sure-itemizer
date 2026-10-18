@@ -62,7 +62,7 @@ APPRISE_URL=discord://webhook_id/webhook_token
 APPRISE_URL=ntfys://my-topic, mailtos://user:pass@example.com
 ```
 
-You'll hear about it when a merchant needs you to sign in again, and when a run fails, once per problem until it clears. Messages carry the status page link (`PUBLIC_URL`). **Integrations → Notifications → Send test** checks the setup. Apprise's own logging is silenced, because it would print the URLs, tokens included. If a URL can't be parsed, the log says so without showing it.
+You'll hear about it when a merchant needs you to sign in again, and when a run fails, once per problem until it clears. Messages carry the status page link (`PUBLIC_URL`). **Integrations → Notifications → Send test** checks the setup. If a notification doesn't arrive, the container log has Apprise's own message about it. Those messages can include the URL, token included, so keep the log private.
 
 ## Configuration
 
