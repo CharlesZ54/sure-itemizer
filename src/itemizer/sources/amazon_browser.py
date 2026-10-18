@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 import time
 from urllib.parse import urlencode
 
@@ -45,6 +46,11 @@ SKIP = ("#ap-account-fixup-phone-skip-link, a#ap-account-fixup-phone-skip-link, 
         "input[type='submit'][value*='Not now' i]")
 SUBMIT = ("input#signInSubmit, input#continue, #auth-send-code, #auth-signin-button, "
           "input[type='submit']:visible, button[type='submit']:visible")
+# Passkey offers can't be completed headlessly; these lead back to the password.
+USE_PASSWORD = re.compile(r"^\s*(your )?password\s*$|(enter|use|sign in with)( your| a)? password", re.I)
+OTHER_WAYS = re.compile(r"(sign in|try) (another|a different) way|other (sign-in )?(options|ways)", re.I)
+EMAIL_LIKE = re.compile(r"[\w.+-]+@[\w-]+(\.[\w-]+)+")
+PHONE_LIKE = re.compile(r"\+?\d[\d\s().*-]{6,}\d")
 
 
 class SignInError(RuntimeError):
@@ -86,6 +92,7 @@ class HeadlessSignIn(PlaywrightBrowserLogin):
     def _drive(self, context, page, email: str, password: str, timeout: int) -> None:
         deadline = time.monotonic() + timeout
         password_tries = 0
+        passkey_detours = 0
         told_to_approve = False
         last_change = time.monotonic()
         last_url = None
@@ -99,7 +106,7 @@ class HeadlessSignIn(PlaywrightBrowserLogin):
 
             error = _text(page, ERROR)
             if error:
-                raise SignInError(f"Amazon says: {error}")
+                raise SignInError(f"Amazon says: {_redact(error, email)}")
 
             if _visible(page, CAPTCHA_IMAGE) and _visible(page, CAPTCHA_INPUT):
                 image = "data:image/png;base64," + base64.b64encode(
@@ -151,6 +158,17 @@ class HeadlessSignIn(PlaywrightBrowserLogin):
                 continue
 
             body = (page.locator("body").inner_text(timeout=2000) or "").lower()
+            if "passkey" in body:
+                # Never press "Sign in with passkey": it waits for Face ID or
+                # a fingerprint that a headless browser doesn't have.
+                passkey_detours += 1
+                if passkey_detours > 4:
+                    raise SignInError("Amazon only offers a passkey sign-in here; turn on password sign-in "
+                                      "for your Amazon account, or try again later")
+                if _click(page, USE_PASSWORD) or _click(page, OTHER_WAYS):
+                    last_change = time.monotonic()
+                    continue
+
             if any(t in body for t in APPROVAL_TEXT):
                 if not told_to_approve:
                     self.io.echo("Amazon sent you a sign-in approval. Approve it on your phone or in your "
@@ -165,9 +183,15 @@ class HeadlessSignIn(PlaywrightBrowserLogin):
                 last_change = time.monotonic()
                 continue
 
+            # A "choose how to sign in" page that no longer mentions passkeys.
+            if passkey_detours and passkey_detours <= 4 and _click(page, USE_PASSWORD):
+                passkey_detours += 1
+                last_change = time.monotonic()
+                continue
+
             if time.monotonic() - last_change > STUCK_AFTER:
-                title = page.title()
-                snippet = " ".join(body.split())[:200]
+                title = _redact(page.title(), email)
+                snippet = _redact(" ".join(body.split())[:200], email)
                 raise SignInError(f"stuck on an Amazon page this doesn't recognize ({title!r}: {snippet})")
 
         raise SignInError("timed out before the sign-in finished")
@@ -221,3 +245,26 @@ def _submit(page, near: str) -> None:
     except Exception:
         # Some steps update the page in place rather than navigating.
         page.wait_for_timeout(1500)
+
+
+def _click(page, name: re.Pattern) -> bool:
+    """Click the first visible link or button whose accessible name matches."""
+    for role in ("link", "button"):
+        loc = page.get_by_role(role, name=name)
+        for i in range(loc.count()):
+            el = loc.nth(i)
+            if el.is_visible() and "forgot" not in (el.inner_text() or "").lower():
+                try:
+                    with page.expect_navigation(wait_until="domcontentloaded", timeout=10000):
+                        el.click()
+                except Exception:
+                    page.wait_for_timeout(1500)  # opened in place rather than navigating
+                return True
+    return False
+
+
+def _redact(text: str, email: str) -> str:
+    """Keep the account's email and phone numbers out of errors and logs."""
+    if email:
+        text = re.sub(re.escape(email), "<email>", text, flags=re.I)
+    return PHONE_LIKE.sub("<phone>", EMAIL_LIKE.sub("<email>", text))

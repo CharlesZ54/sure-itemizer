@@ -41,10 +41,25 @@ OTP_PAGE = """<form id="auth-mfa-form" method="post" action="/done">
     <input name="otpCode"><input type="checkbox" id="auth-mfa-remember-device" name="rememberDevice">
     <input type="submit" id="auth-signin-button" value="Sign in"></form>"""
 
+# Amazon's passkey offer; "Sign in with passkey" must never be pressed.
+PASSKEY_PAGES = {
+    "direct": """<h1>Use your passkey</h1><p>me@example.com <a href="/signin">Change</a></p>
+        <button onclick="location.href='/passkey-trap'">Sign in with passkey</button>
+        <p>or <a href="/pw">Enter your password</a></p>""",
+    "ways": """<h1>Use your passkey</h1>
+        <button onclick="location.href='/passkey-trap'">Sign in with passkey</button>
+        <a href="/ways">Sign in another way</a>""",
+}
+WAYS_PAGE = """<h1>Choose how to sign in</h1><ul><li><a href="/passkey-trap">Passkey</a></li>
+    <li><a href="/pw">Password</a></li></ul>"""
+STUCK_PAGE = """<h1>Something new</h1><p>Hi me@example.com, we called +1 (555) 010-0000</p>"""
+
 
 class FakeAmazon:
-    def __init__(self):
+    def __init__(self, passkey=None, stuck=False):
         self.posts = []
+        self.gets = []
+        self.passkey, self.stuck = passkey, stuck
         fake = self
 
         class H(BaseHTTPRequestHandler):
@@ -61,13 +76,23 @@ class FakeAmazon:
                 self.wfile.write(data)
 
             def do_GET(self):
-                self._page(PAGES.get(self.path.split("?")[0], "home"))
+                path = self.path.split("?")[0]
+                fake.gets.append(path)
+                if path == "/pw":
+                    return self._page(password_page())
+                if path == "/ways":
+                    return self._page(WAYS_PAGE)
+                self._page(PAGES.get(path, "home"))
 
             def do_POST(self):
                 n = int(self.headers.get("Content-Length") or 0)
                 form = {k: v[0] for k, v in parse_qs(self.rfile.read(n).decode()).items()}
                 fake.posts.append((self.path, form))
                 if self.path == "/password":
+                    if fake.stuck:
+                        return self._page(STUCK_PAGE)
+                    if fake.passkey:
+                        return self._page(PASSKEY_PAGES[fake.passkey])
                     return self._page(password_page())
                 if self.path == "/check":
                     if form.get("password") != "right horse battery":
@@ -135,3 +160,21 @@ def test_wrong_password_reports_amazons_message():
     fake = FakeAmazon()
     with pytest.raises(SignInError, match="Your password is incorrect"):
         drive(fake, ScriptedIO([]), "wrong")
+
+
+@pytest.mark.parametrize("variant", ["direct", "ways"])
+def test_passkey_offer_falls_back_to_password(variant):
+    fake, io = FakeAmazon(passkey=variant), ScriptedIO(["1", "123456"])
+    drive(fake, io, "right horse battery")
+    assert "/passkey-trap" not in fake.gets
+    assert [p for p, _ in fake.posts] == ["/password", "/check", "/otp", "/done"]
+
+
+def test_unknown_page_error_hides_email_and_phone(monkeypatch):
+    import itemizer.sources.amazon_browser as ab
+    monkeypatch.setattr(ab, "STUCK_AFTER", 2)
+    with pytest.raises(SignInError) as e:
+        drive(FakeAmazon(stuck=True), ScriptedIO([]), "right horse battery")
+    msg = str(e.value)
+    assert "doesn't recognize" in msg and "example.com" not in msg and "555" not in msg
+    assert "<email>" in msg and "<phone>" in msg
