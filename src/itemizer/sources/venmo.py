@@ -3,13 +3,13 @@
 Nothing is split. A payment you made from your bank becomes
 "Venmo to Alex Smith: pizza"; a cash-out to your bank becomes
 "Venmo cash-out: Alex Smith (dinner), Sam Lee (tickets)", listing the payments
-it carried. Payments made from your Venmo balance never reach the bank, so
-there's nothing to describe for them.
+received since the previous cash-out. Payments made from your Venmo balance
+never reach the bank, so there's nothing to describe for them.
 
-The data is Venmo's own statement CSV. Signing in happens in the live browser
-view only (no scripted sign-in: failed automated attempts are what get a
-payments account restricted). Statements can also be dropped into
-/data/venmo/statements/ by hand.
+Data comes from Venmo's (unofficial) mobile API with a token from signing in
+on the Connect page (password + texted code) or pasted there. Venmo's own
+statement CSVs dropped into /data/venmo/statements/ are read too, and are the
+more precise source for cash-outs (they record each transfer).
 """
 from __future__ import annotations
 
@@ -21,20 +21,17 @@ import os
 import re
 import threading
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from ..config import Config
 from ..models import Purchase
 from ..money import to_cents
 from .base import LoginRequired, Source
+from .venmo_api import VenmoAuthError, VenmoClient, VenmoError
 
 log = logging.getLogger(__name__)
 
-HOME = "https://account.venmo.com/"
-STATEMENT_PAGE = "https://account.venmo.com/statement"
-# Pages that mean "not signed in yet", whatever the host.
-NOT_SIGNED_IN = re.compile(r"sign|login|verify|challenge|mfa|auth|two-factor|otp", re.I)
 MAX_NAMED = 3  # cash-out descriptions name this many payments, then "+N more"
 
 
@@ -161,15 +158,77 @@ def purchases_from(rows: list[Row]) -> list[Purchase]:
     return out
 
 
+# Bank lines that are money coming back from Venmo.
+CASH_OUT = re.compile(r"cash ?out|transfer from venmo", re.I)
+
+
+def _name(user: dict | None) -> str:
+    user = user or {}
+    return (user.get("display_name") or " ".join(filter(None, [user.get("first_name"), user.get("last_name")]))
+            or user.get("username") or "someone")
+
+
+def payments_from_stories(stories: list[dict], my_id: str) -> list[Row]:
+    """Venmo API stories as statement-like rows (cents negative = left your Venmo)."""
+    rows = []
+    for story in stories:
+        p = story.get("payment") or {}
+        if not p or (p.get("status") or "").lower() not in ("settled", "complete", "completed"):
+            continue
+        actor = p.get("actor") or {}
+        target = (p.get("target") or {}).get("user") or {}
+        action = (p.get("action") or "").lower()
+        i_acted = str(actor.get("id")) == str(my_id)
+        # pay: the actor paid the target. charge: the actor requested, the target paid.
+        paid_out = i_acted if action == "pay" else not i_acted
+        other = target if i_acted else actor
+        cents = to_cents(p.get("amount") or 0)
+        when = (p.get("date_completed") or story.get("date_created") or "").replace("Z", "")
+        try:
+            stamp = datetime.fromisoformat(when)
+        except ValueError:
+            continue
+        rows.append(Row(id=str(p.get("id") or story.get("id")), when=stamp, type="Payment", status="Complete",
+                        note=" ".join((p.get("note") or "").split()), sender="" if paid_out else _name(other),
+                        recipient=_name(other) if paid_out else "", cents=-cents if paid_out else cents,
+                        fee_cents=0, funding="", destination=""))
+    return rows
+
+
+def describe_cash_outs(txns: list, received: list[Row], since: date) -> list[Purchase]:
+    """Describe the bank's Venmo cash-outs with the payments received before each one.
+
+    The API doesn't list transfers, so each cash-out is described from what
+    came in after the previous cash-out (or the lookback start) up to its date.
+    """
+    outs = sorted((t for t in txns if t.amount_cents < 0 and CASH_OUT.search(t.name)), key=lambda t: t.date)
+    received = sorted(received, key=lambda r: r.when)
+    purchases, start = [], since
+    for t in outs:
+        window = [r for r in received if start <= r.when.date() <= t.date]
+        named = [_label(r) for r in window]
+        desc = "Venmo cash-out"
+        if named:
+            extra = f" +{len(named) - MAX_NAMED} more" if len(named) > MAX_NAMED else ""
+            desc += ": " + ", ".join(named[:MAX_NAMED]) + extra
+        purchases.append(Purchase(source="venmo", external_id=f"cash-out:{t.id}", date=t.date,
+                                  amount_cents=t.amount_cents, description=desc))
+        start = t.date + timedelta(days=1)
+    return purchases
+
+
 class VenmoSource(Source):
     name = "venmo"
     title = "Venmo"
     descriptor = re.compile(r"venmo", re.I)
     sure_search = "venmo"
-    # Bank pulls for Venmo payments post the same day or a few after; cash-outs
-    # take 1-3 business days.
+    # Bank pulls for Venmo payments post the same day or a few after.
     date_window = (1, 5)
-    live_url = HOME
+    login_fields = [
+        ("username", "Venmo email or phone", "text", True),
+        ("password", "Venmo password", "password", True),
+        ("token", "…or paste a Venmo access token instead", "password", True),
+    ]
 
     def __init__(self, data_dir: Path, account_filter: str | None = None) -> None:
         super().__init__(account_filter)
@@ -181,101 +240,62 @@ class VenmoSource(Source):
         return cls(data_dir=cfg.data_dir / "venmo", account_filter=cfg.source_setting("VENMO", "SURE_ACCOUNT"))
 
     @property
-    def state_path(self) -> Path:
-        return self.data_dir / "state.json"
+    def auth_path(self) -> Path:
+        return self.data_dir / "auth.json"
 
     @property
     def statements_dir(self) -> Path:
         return self.data_dir / "statements"
 
-    # Signing in (live view only) ----------------------------------------
+    # Signing in ---------------------------------------------------------
 
     def connected(self) -> bool:
-        return self.state_path.exists()
+        return self.auth_path.exists()
 
-    def live_signed_in(self, context) -> bool:
-        for page in context.pages:
-            if page.is_closed():
-                continue
-            url = page.url
-            if url.startswith(HOME) and not NOT_SIGNED_IN.search(url.split("?")[0]):
-                return True
-        return False
-
-    def live_save(self, context) -> None:
+    def _save(self, client: VenmoClient) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.data_dir, 0o700)
-        context.storage_state(path=str(self.state_path))
-        os.chmod(self.state_path, 0o600)
+        tmp = self.auth_path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"token": client.token, "device_id": client.device_id}))
+        os.chmod(tmp, 0o600)
+        tmp.replace(self.auth_path)
+
+    def _client(self) -> VenmoClient:
+        if not self.auth_path.exists():
+            raise LoginRequired("Venmo isn't connected yet")
+        saved = json.loads(self.auth_path.read_text())
+        return VenmoClient(token=saved.get("token"), device_id=saved.get("device_id"))
+
+    def login(self, fields: dict[str, str], io) -> None:
+        token = (fields.get("token") or "").strip()
+        username, password = (fields.get("username") or "").strip(), fields.get("password") or ""
+        with self._lock:
+            # Reuse this install's device id, so a trusted device stays trusted.
+            device = None
+            if self.auth_path.exists():
+                device = json.loads(self.auth_path.read_text()).get("device_id")
+            client = VenmoClient(device_id=device)
+            if token:
+                client.set_token(token)
+            elif username and password:
+                secret = client.start_login(username, password)
+                if secret:
+                    client.send_code(secret)
+                    code = io.prompt("Enter the code Venmo texted you")
+                    client.finish_login(re.sub(r"\s", "", code), secret)
+                    client.trust_device()
+            else:
+                raise ValueError("enter your Venmo email/phone and password, or paste an access token")
+            me = client.me()  # proves the token works before anything is saved
+            self._save(client)
+        log.info("venmo: connected as %s", me.get("username") or "your account")
 
     def logout(self) -> None:
-        self.state_path.unlink(missing_ok=True)
+        # Only forgets the token here; revoking it is up to the user (Venmo's
+        # security settings), so a token shared with another tool keeps working.
+        self.auth_path.unlink(missing_ok=True)
 
     # Fetching -----------------------------------------------------------
-
-    def _browser(self, pw):
-        from ..livebrowser import CHROME_UA, VIEWPORT
-
-        browser = pw.chromium.launch(headless=True, channel="chromium",
-                                     args=["--disable-blink-features=AutomationControlled"])
-        context = browser.new_context(storage_state=str(self.state_path), locale="en-US", viewport=VIEWPORT,
-                                      user_agent=CHROME_UA.format(major=browser.version.split(".")[0]))
-        return browser, context
-
-    def probe(self) -> Path:
-        """Record what Venmo's statements page requests, to find its statement download."""
-        from playwright.sync_api import sync_playwright
-
-        if not self.connected():
-            raise LoginRequired("Venmo isn't connected yet")
-        out = self.data_dir / "probe"
-        out.mkdir(parents=True, exist_ok=True)
-        os.chmod(out, 0o700)
-        seen: list[dict] = []
-
-        def keep(response) -> None:
-            url = response.url
-            if "venmo.com" not in url:
-                return
-            ctype = response.headers.get("content-type") or ""
-            entry = {"status": response.status, "method": response.request.method, "url": url, "type": ctype}
-            if "json" in ctype or "csv" in ctype:
-                try:
-                    body = response.text()
-                    path = out / f"{len(seen):03d}.txt"
-                    path.write_text(body)
-                    os.chmod(path, 0o600)
-                    entry["saved"] = path.name
-                except Exception:
-                    pass
-            seen.append(entry)
-
-        with self._lock, sync_playwright() as pw:
-            browser, context = self._browser(pw)
-            try:
-                page = context.new_page()
-                page.on("response", keep)
-                page.goto(STATEMENT_PAGE, wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(6000)
-                if NOT_SIGNED_IN.search(page.url.split("?")[0]):
-                    raise LoginRequired("Venmo wants you to sign in again")
-                button = page.get_by_role("button", name=re.compile("download csv", re.I))
-                if button.count():
-                    try:
-                        with page.expect_download(timeout=20000) as dl:
-                            button.first.click()
-                        dl.value.save_as(str(out / "download.csv"))
-                        os.chmod(out / "download.csv", 0o600)
-                    except Exception as e:
-                        seen.append({"download_failed": str(e)[:200]})
-                    page.wait_for_timeout(3000)
-                context.storage_state(path=str(self.state_path))  # keep refreshed cookies
-            finally:
-                browser.close()
-        index = out / "index.json"
-        index.write_text(json.dumps(seen, indent=1))
-        os.chmod(index, 0o600)
-        return out
 
     def _saved_statements(self) -> list[Row]:
         rows: list[Row] = []
@@ -287,11 +307,36 @@ class VenmoSource(Source):
                     log.warning("venmo: skipping %s: %s", f.name, e)
         return rows
 
-    def fetch(self, since: date, amounts: set[int] | None = None) -> list[Purchase]:
-        rows = self._saved_statements()
-        if not self.connected() and not rows:
-            raise LoginRequired("Venmo isn't connected yet")
-        # Downloading the statement from venmo.com comes once the probe shows
-        # how the statements page fetches it.
-        unique = {r.id: r for r in rows}.values()
-        return [p for p in purchases_from(list(unique)) if p.date >= since]
+    def _api_rows(self, since: date) -> list[Row]:
+        client = self._client()
+        try:
+            me = client.me()
+            stories, before = [], None
+            for _ in range(20):  # 50 a page; far more than a lookback needs
+                page = client.stories(me["id"], before_id=before)
+                if not page:
+                    break
+                stories += page
+                before = page[-1].get("id")
+                oldest = (page[-1].get("date_created") or "")[:10]
+                if oldest and oldest < since.isoformat():
+                    break
+        except VenmoAuthError as e:
+            raise LoginRequired(str(e)) from e
+        except VenmoError as e:
+            raise RuntimeError(f"venmo: {e}") from e
+        return payments_from_stories(stories, me["id"])
+
+    def fetch(self, since: date, amounts: set[int] | None = None, txns=None) -> list[Purchase]:
+        statement = self._saved_statements()
+        api = self._api_rows(since) if self.connected() or not statement else []
+        purchases = {p.external_id: p for p in purchases_from(statement)}
+        # Statement CSVs record cash-outs exactly; without them, describe the
+        # bank's cash-outs from the payments received before each.
+        if not any(r.is_transfer for r in statement):
+            received = [r for r in api if r.cents > 0]
+            for p in describe_cash_outs(txns or [], received, since):
+                purchases[p.external_id] = p
+        for p in purchases_from([r for r in api if r.cents < 0]):
+            purchases.setdefault(p.external_id, p)
+        return [p for p in purchases.values() if p.date >= since]

@@ -73,7 +73,7 @@ class Runner:
             return
 
         purchases = source.fetch(since - timedelta(days=source.date_window[1]),
-                                 amounts={abs(t.amount_cents) for t in txns})
+                                 amounts={abs(t.amount_cents) for t in txns}, txns=txns)
         pairs = match(txns, purchases, source.date_window)
         matched = {t.id for t, _ in pairs}
 

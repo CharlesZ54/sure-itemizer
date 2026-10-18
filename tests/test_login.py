@@ -83,7 +83,7 @@ class OtpSource(Source):
     def logout(self):
         self.session = None
 
-    def fetch(self, since, amounts=None):
+    def fetch(self, since, amounts=None, txns=None):
         if self.session is None or self.expired:
             raise LoginRequired("session expired")
         return []

@@ -53,6 +53,20 @@ Only the browser's session is kept (`/data/target/state.json`, mode 600). Target
 
 The live view is also available on its own from either Connect page (*Or sign in yourself…*).
 
+## Connecting Venmo
+
+Venmo transactions aren't split; their descriptions are replaced. The bank's original text is kept in the notes.
+
+- **A payment you made from your bank** (`VENMO PAYMENT`) becomes *"Venmo to Alex Doe: pizza"*. That includes requests from others that you paid.
+- **A cash-out** (`VENMO CASHOUT`) becomes *"Venmo cash-out: Sam Roe (dinner), Alex Doe (tickets)"*, listing the payments received since the previous cash-out.
+- **Payments from your Venmo balance** never reach the bank, so there's nothing to describe.
+
+**Integrations → Venmo → Connect** uses Venmo's unofficial mobile API, the same one the [venmo-api](https://github.com/mmohades/Venmo) library uses. Either sign in with your email or phone and password (Venmo texts a code, which you enter on the page; this device is then trusted), or paste an access token you already have. Only the token is kept (`/data/venmo/auth.json`, mode 600); it doesn't expire until revoked in Venmo. The service only ever reads with it. **Disconnect** forgets the token but doesn't revoke it, so a token shared with another tool keeps working.
+
+Optionally, drop Venmo statement CSVs (venmo.com → Statements → Download CSV) into `/data/venmo/statements/`. They record each cash-out exactly, so cash-out descriptions become precise rather than inferred.
+
+The API is unofficial: Venmo can change it at any time, and unusual access could draw attention to the account.
+
 ## Notifications
 
 Notifications go through [Apprise](https://github.com/caronc/apprise), so they can land in Discord, ntfy, Pushover, Telegram, Home Assistant, email, a plain JSON webhook and [many more](https://github.com/caronc/apprise/wiki). Set `APPRISE_URL` to one or more Apprise URLs, separated by commas:
@@ -82,6 +96,7 @@ You'll hear about it when a merchant needs you to sign in again, and when a run 
 | `AMZN_SURE_ACCOUNT` | — | Only look at this Sure account (id or part of its name) |
 | `AMZN_DOMAIN` | `amazon.com` | Other Amazon marketplaces are untested |
 | `TARGET_SURE_ACCOUNT` | — | Only look at this Sure account for Target |
+| `VENMO_SURE_ACCOUNT` | — | Only look at this Sure account for Venmo |
 
 The Amazon variables are `AMZN_*`, not `AMAZON_*`, because the `amazon-orders` library reads every `AMAZON_*` variable as its own setting.
 

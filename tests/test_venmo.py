@@ -78,3 +78,172 @@ def test_rename_plan_keeps_the_bank_text_in_the_notes():
     # Renaming again doesn't stack the original text.
     again = plan(SureTxn("t", txn.date, 3809, "something", result.notes, "a", "Checking", None), purchase)
     assert again.notes == result.notes
+
+
+# --- the mobile API -------------------------------------------------------
+
+import json as _json  # noqa: E402
+import os  # noqa: E402
+import threading  # noqa: E402
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E402
+
+from itemizer.models import Purchase  # noqa: E402,F401
+from itemizer.sources import venmo_api  # noqa: E402
+from itemizer.sources.base import LoginRequired  # noqa: E402
+from itemizer.sources.venmo import VenmoSource, describe_cash_outs, payments_from_stories  # noqa: E402
+
+ME = {"id": "100", "username": "pat-example", "display_name": "Pat Example"}
+ALEX = {"id": "200", "display_name": "Alex Doe"}
+SAM = {"id": "300", "first_name": "Sam", "last_name": "Roe"}
+
+
+def story(pid, action, actor, target, amount, note, when, status="settled"):
+    return {"id": f"s{pid}", "date_created": when, "type": "payment",
+            "payment": {"id": pid, "action": action, "actor": actor, "target": {"type": "user", "user": target},
+                        "amount": amount, "note": note, "status": status, "date_completed": when}}
+
+
+STORIES = [
+    story("1", "pay", ME, ALEX, 38.09, "pizza", "2026-10-01T12:00:00"),        # I paid Alex
+    story("2", "pay", SAM, ME, 40.0, "dinner", "2026-10-02T12:00:00"),         # Sam paid me
+    story("3", "charge", ME, ALEX, 25.19, "tickets", "2026-10-03T12:00:00"),   # I requested, Alex paid
+    story("4", "charge", SAM, ME, 76.20, "utilities", "2026-10-07T12:00:00"),  # Sam requested, I paid
+    story("5", "pay", ME, SAM, 9.0, "oops", "2026-10-08T12:00:00", status="cancelled"),
+]
+
+
+def test_stories_become_rows_with_the_right_direction():
+    rows = {r.id: r for r in payments_from_stories(STORIES, "100")}
+    assert rows["1"].cents == -3809 and rows["1"].counterparty == "Alex Doe"
+    assert rows["2"].cents == 4000 and rows["2"].counterparty == "Sam Roe"
+    assert rows["3"].cents == 2519 and rows["3"].counterparty == "Alex Doe"
+    assert rows["4"].cents == -7620 and rows["4"].counterparty == "Sam Roe"
+    assert "5" not in rows
+
+
+def test_cash_outs_are_described_from_what_came_in_before_them():
+    received = [r for r in payments_from_stories(STORIES, "100") if r.cents > 0]
+    txn = lambda tid, d, cents: SureTxn(tid, d, cents, "Transfer from Venmo - VENMO CASHOUT", None, "a", "Chk", None)
+    outs = describe_cash_outs([txn("c1", date(2026, 10, 2), -4000), txn("c2", date(2026, 10, 5), -2519),
+                               txn("not-a-cashout", date(2026, 10, 5), 500)], received, since=date(2026, 9, 20))
+    assert [(p.external_id, p.amount_cents, p.description) for p in outs] == [
+        ("cash-out:c1", -4000, "Venmo cash-out: Sam Roe (dinner)"),
+        ("cash-out:c2", -2519, "Venmo cash-out: Alex Doe (tickets)"),
+    ]
+
+
+class FakeVenmo:
+    """api.venmo.com's sign-in and reading endpoints."""
+
+    def __init__(self, want_code=True):
+        self.calls, self.want_code, self.token = [], want_code, "tok-123"
+        fake = self
+
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _json(self, code, body, headers=None):
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                for k, v in (headers or {}).items():
+                    self.send_header(k, v)
+                self.end_headers()
+                self.wfile.write(_json.dumps(body).encode())
+
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                body = _json.loads(self.rfile.read(n) or b"{}")
+                fake.calls.append(("POST", self.path, body, dict(self.headers)))
+                if self.path.startswith("/v1/oauth/access_token"):
+                    if self.headers.get("venmo-otp"):
+                        if self.headers["venmo-otp"] == "123456" and self.headers.get("venmo-otp-secret") == "sec":
+                            return self._json(200, {"access_token": fake.token})
+                        return self._json(400, {"error": {"message": "Wrong code"}})
+                    if body.get("password") != "pw":
+                        return self._json(401, {"error": {"code": 264, "message": "Your password is incorrect"}})
+                    if fake.want_code:
+                        return self._json(401, {"error": {"code": 81109, "message": "2FA"}}, {"venmo-otp-secret": "sec"})
+                    return self._json(200, {"access_token": fake.token})
+                return self._json(200, {})
+
+            def do_GET(self):
+                fake.calls.append(("GET", self.path, None, dict(self.headers)))
+                if self.headers.get("Authorization") != f"Bearer {fake.token}":
+                    return self._json(401, {"error": {"message": "Invalid token"}})
+                if self.path.startswith("/v1/account"):
+                    return self._json(200, {"data": {"user": ME}})
+                if self.path.startswith("/v1/stories/target-or-actor/100"):
+                    return self._json(200, {"data": [] if "before_id" in self.path else STORIES})
+                self._json(404, {})
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_port}/v1"
+
+
+class CodeIO:
+    def __init__(self, code):
+        self.code, self.prompts = code, []
+
+    def prompt(self, msg, type=None, **kw):
+        self.prompts.append(msg)
+        return self.code
+
+
+@pytest.fixture
+def venmo(monkeypatch, tmp_path):
+    fake = FakeVenmo()
+    monkeypatch.setattr(venmo_api, "BASE", fake.base)
+    return fake, VenmoSource(tmp_path / "venmo")
+
+
+def test_sign_in_with_texted_code_saves_only_the_token(venmo):
+    fake, source = venmo
+    io = CodeIO("123 456")
+    source.login({"username": "me@example.com", "password": "pw", "token": ""}, io)
+    assert io.prompts == ["Enter the code Venmo texted you"]
+    paths = [c[1].split("?")[0] for c in fake.calls]
+    assert paths == ["/v1/oauth/access_token", "/v1/account/two-factor/token", "/v1/oauth/access_token",
+                     "/v1/users/devices", "/v1/account"]
+    saved = source.auth_path.read_text()
+    assert _json.loads(saved)["token"] == "tok-123" and "pw" not in saved
+    assert oct(os.stat(source.auth_path).st_mode & 0o777) == "0o600"
+    # The same device id is used throughout, so Venmo can trust it.
+    devices = {c[3].get("device-id") for c in fake.calls}
+    assert len(devices) == 1 and _json.loads(saved)["device_id"] in devices
+
+
+def test_wrong_password_is_reported(venmo):
+    _, source = venmo
+    with pytest.raises(venmo_api.VenmoAuthError, match="password is incorrect"):
+        source.login({"username": "me@example.com", "password": "nope", "token": ""}, CodeIO("1"))
+    assert not source.connected()
+
+
+def test_pasting_a_token_works_and_bad_ones_are_refused(venmo):
+    fake, source = venmo
+    with pytest.raises(venmo_api.VenmoAuthError):
+        source.login({"token": "wrong"}, None)
+    assert not source.connected()
+    source.login({"token": "Bearer tok-123"}, None)
+    assert source.connected()
+
+
+def test_fetch_describes_payments_and_cash_outs(venmo):
+    _, source = venmo
+    source.login({"token": "tok-123"}, None)
+    cash_out = SureTxn("c1", date(2026, 10, 4), -6519, "Transfer from Venmo - VENMO CASHOUT", None, "a", "Chk", None)
+    got = {p.external_id: p for p in source.fetch(date(2026, 9, 20), txns=[cash_out])}
+    assert got["1"].amount_cents == 3809 and got["1"].description == "Venmo to Alex Doe: pizza"
+    assert got["4"].amount_cents == 7620 and got["4"].description == "Venmo to Sam Roe: utilities"
+    assert got["cash-out:c1"].description == "Venmo cash-out: Sam Roe (dinner), Alex Doe (tickets)"
+    assert "2" not in got and "3" not in got  # money in only shows up via a cash-out
+
+
+def test_a_rejected_token_means_sign_in_again(venmo):
+    fake, source = venmo
+    source.login({"token": "tok-123"}, None)
+    fake.token = "revoked-now"
+    with pytest.raises(LoginRequired, match="rejected the token"):
+        source.fetch(date(2026, 9, 20), txns=[])

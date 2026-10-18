@@ -284,10 +284,15 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             if snap["state"] in ("running", "need_input"):
                 inner = '<div id="flow"></div>' + CONNECT_JS
             else:
-                fields = "".join(
-                    f'<label for="{n}">{html.escape(label)}</label>'
-                    f'<input id="{n}" name="{n}" type="{t}" required autocomplete="{"username" if t == "email" else "current-password" if t == "password" else "off"}">'
-                    for n, label, t in source.login_fields)
+                def field(f) -> str:
+                    n, label, t = f[:3]
+                    optional = len(f) > 3 and f[3]
+                    auto = "username" if t == "email" else "current-password" if t == "password" else "off"
+                    return (f'<label for="{n}">{html.escape(label)}</label>'
+                            f'<input id="{n}" name="{n}" type="{t}" {"" if optional else "required"} '
+                            f'autocomplete="{auto}">')
+
+                fields = "".join(field(f) for f in source.login_fields)
                 inner = (f'<form method="post">{fields}<p><button class="primary">Sign in</button></p></form>'
                          f'<p class="muted">Used once to sign in, then discarded. Only the session {title} issues '
                          f'is kept. If {title} asks for a verification code, you\'ll be prompted here.</p>')
@@ -349,7 +354,7 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                 form = self._form()
                 try:
                     if len(parts) == 2:
-                        fields = {n: form.get(n, "") for n, _, _ in source.login_fields}
+                        fields = {f[0]: form.get(f[0], "") for f in source.login_fields}
                         flow.start(lambda io: source.login(fields, io), on_success=lambda: _connected(source))
                         return self._redirect(source.name)
                     if parts[2] == "answer":

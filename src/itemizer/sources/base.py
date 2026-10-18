@@ -43,9 +43,10 @@ class Source(ABC):
     sure_search: str
     #: How far the merchant's date may sit before/after the bank's date.
     date_window: tuple[int, int] = (3, 5)
-    #: Fields the Connect page asks for: (name, label, html input type).
+    #: Fields the Connect page asks for: (name, label, html input type), plus
+    #: an optional fourth element True for a field that may be left empty.
     #: Empty means the source needs no interactive login.
-    login_fields: list[tuple[str, str, str]] = []
+    login_fields: list[tuple] = []
 
     def __init__(self, account_filter: str | None = None) -> None:
         # Sure account id, or a case-insensitive substring of its name.
@@ -60,13 +61,15 @@ class Source(ABC):
         return True
 
     @abstractmethod
-    def fetch(self, since: date, amounts: set[int] | None = None) -> list[Purchase]:
+    def fetch(self, since: date, amounts: set[int] | None = None,
+              txns: list[SureTxn] | None = None) -> list[Purchase]:
         """Return the merchant's charges on or after `since`.
 
         `amounts` (absolute cents) are the Sure transactions still waiting for
-        a match. A source may use it to skip expensive per-order lookups, but
-        must not rely on it for correctness. Raises LoginRequired when the
-        user has to sign in.
+        a match, and `txns` the transactions themselves. A source may use them
+        to skip expensive lookups, or (when the merchant has no record of a
+        bank movement, like a Venmo cash-out) to describe them. Raises
+        LoginRequired when the user has to sign in.
         """
 
     # Signing in -------------------------------------------------------

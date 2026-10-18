@@ -352,7 +352,7 @@ class AmazonSource(Source):
             return True
         return bool(payment_method) and self.card_last4 in payment_method
 
-    def fetch(self, since: date, amounts: set[int] | None = None) -> list[Purchase]:
+    def fetch(self, since: date, amounts: set[int] | None = None, txns=None) -> list[Purchase]:
         from amazonorders.exception import AmazonOrdersAuthError
 
         with self._lock:

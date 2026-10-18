@@ -157,7 +157,7 @@ class TargetSource(Source):
         (out / "index.json").write_text(json.dumps(seen, indent=1))
         return out
 
-    def fetch(self, since: date, amounts: set[int] | None = None) -> list[Purchase]:
+    def fetch(self, since: date, amounts: set[int] | None = None, txns=None) -> list[Purchase]:
         if not self.connected():
             raise LoginRequired("Target isn't connected yet")
         # Receipt parsing comes once the probe shows Target's data shape.

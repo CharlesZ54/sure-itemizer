@@ -81,8 +81,8 @@ def main(argv: list[str]) -> int:
             print(f"usage: itemizer login {{{','.join(by_name)}}}")
             return 2
         source = by_name[argv[1]]
-        fields = {n: (getpass.getpass(f"{label}: ") if t == "password" else input(f"{label}: "))
-                  for n, label, t in source.login_fields}
+        fields = {f[0]: (getpass.getpass(f"{f[1]}: ") if f[2] == "password" else input(f"{f[1]}: "))
+                  for f in source.login_fields}
         source.login(fields, ConsoleIO())
         notifier.clear(login_flag(source))
         print(f"{source.name}: signed in; session saved")

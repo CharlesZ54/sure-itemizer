@@ -99,7 +99,7 @@ class FakeSource(Source):
         self.purchases = purchases
         self.fetches = 0
 
-    def fetch(self, since, amounts=None):
+    def fetch(self, since, amounts=None, txns=None):
         self.fetches += 1
         return self.purchases
 
