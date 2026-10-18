@@ -8,8 +8,10 @@ from datetime import date, timedelta
 from .config import Config
 from .matcher import match
 from .models import Plan
+from .notify import Notifier
 from .planner import plan
 from .sources import Source
+from .sources.base import LoginRequired
 from .state import State
 from .sure import SplitsUnsupported, SureClient, SureError
 
@@ -17,12 +19,18 @@ log = logging.getLogger(__name__)
 _run_lock = threading.Lock()
 
 
+def login_flag(source: Source) -> str:
+    return f"login_required:{source.name}"
+
+
 class Runner:
-    def __init__(self, cfg: Config, sure: SureClient, sources: list[Source], state: State) -> None:
+    def __init__(self, cfg: Config, sure: SureClient, sources: list[Source], state: State,
+                 notifier: Notifier | None = None) -> None:
         self.cfg = cfg
         self.sure = sure
         self.sources = sources
         self.state = state
+        self.notifier = notifier or Notifier(None, None, state)
 
     def run(self) -> dict:
         if not _run_lock.acquire(blocking=False):
@@ -32,14 +40,25 @@ class Runner:
         tally: Counter = Counter()
         try:
             for source in self.sources:
-                self._run_source(source, tally)
+                try:
+                    self._run_source(source, tally)
+                except LoginRequired as e:
+                    # Never sign in unattended: stop this source and ask the
+                    # user, once, to reconnect it from the web UI.
+                    log.warning("%s: login required: %s", source.name, e)
+                    tally[f"{source.name}_login_required"] += 1
+                    self.notifier.once(login_flag(source), "login_required",
+                                       f"Sure Itemizer: {source.title or source.name} needs you to sign in "
+                                       f"({e}). Open the status page and click Connect.", source.name)
             summary = {"dry_run": self.cfg.dry_run, **tally}
             self.state.finish_run(run_id, summary)
+            self.notifier.clear("run_failed")
             log.info("run finished: %s", summary)
             return summary
         except Exception as e:
             log.exception("run failed")
             self.state.finish_run(run_id, dict(tally), error=str(e))
+            self.notifier.once("run_failed", "run_failed", f"Sure Itemizer run failed: {e}")
             raise
         finally:
             _run_lock.release()

@@ -27,13 +27,15 @@ class Config:
     web_port: int
     data_dir: Path
     sources: tuple[str, ...]
+    notify_webhook_url: str | None = None
+    # Where the user reaches the status page; put in notifications as a link.
+    public_url: str | None = None
 
-    amazon_username: str | None
-    amazon_password: str | None
-    amazon_otp_secret: str | None
-    amazon_card_last4: str | None
-    amazon_sure_account: str | None
-    amazon_domain: str | None
+    # Merchant credentials are deliberately not configuration: they are typed
+    # into the web UI at login time and never stored.
+    amazon_card_last4: str | None = None
+    amazon_sure_account: str | None = None
+    amazon_domain: str | None = None
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -51,9 +53,8 @@ class Config:
             web_port=int(_env("WEB_PORT", "8686")),
             data_dir=Path(_env("DATA_DIR", "/data")),
             sources=tuple(s.strip().lower() for s in _env("SOURCES", "amazon").split(",") if s.strip()),
-            amazon_username=_env("AMZN_USERNAME"),
-            amazon_password=_env("AMZN_PASSWORD"),
-            amazon_otp_secret=(_env("AMZN_OTP_SECRET") or "").replace(" ", "") or None,
+            notify_webhook_url=_env("NOTIFY_WEBHOOK_URL"),
+            public_url=(_env("PUBLIC_URL") or "").rstrip("/") or None,
             amazon_card_last4=_env("AMZN_CARD_LAST4"),
             amazon_sure_account=_env("AMZN_SURE_ACCOUNT"),
             amazon_domain=_env("AMZN_DOMAIN"),

@@ -28,7 +28,28 @@ Everything it decides is recorded in `/data/itemizer.db` and shown on a small st
 - **Sure v0.7.6 or newer**; the split API arrived in [PR #4117](https://github.com/we-promise/sure/pull/4117). On older versions everything stays *deferred* (or *planned* in a dry run) and nothing is written.
 - **Something in Sure that categorizes the new rows**, such as a rule with the *Auto categorize* action.
 - **A Sure API key** with `read_write` scope (*Settings → API keys*).
-- **An Amazon login.** If you use two-step verification, give the service the authenticator secret (`AMZN_OTP_SECRET`) so it can log in unattended. To get one, add a new authenticator app in Amazon's *Login & security → Two-step verification* and copy the key behind "Can't scan the barcode?". The session is saved in `/data/amazon/cookies.json`, so logins are rare.
+- **An Amazon account,** connected from the web UI (below).
+
+## Connecting Amazon
+
+Open the status page, go to **Integrations → Amazon → Connect**, and sign in. If Amazon asks where to send a code, or for the 6-digit code itself (or, rarely, a captcha), the page prompts you.
+
+- **Your email and password are used once and thrown away.** They aren't configuration, and they aren't written anywhere. The only thing kept is the session Amazon issues (`/data/amazon/cookies.json`, mode 600), the same thing your browser keeps when you tick "Keep me signed in".
+- **No authenticator secret is ever needed.** Two-step verification keeps working as intended.
+- **Scheduled runs never sign in on their own.** When Amazon ends the session, the run stops, the page shows *Sign-in needed*, and `NOTIFY_WEBHOOK_URL` gets **one** notification. Click **Reconnect** to sign in again, and it catches up straight away.
+
+The page is plain HTTP, so your Amazon password crosses your LAN unencrypted when you connect. If that matters, reach it over HTTPS, for example with `tailscale serve`.
+
+## Notifications
+
+Set `NOTIFY_WEBHOOK_URL` and the service POSTs JSON when a merchant needs you to sign in again (`login_required`) or a run fails (`run_failed`). Each is sent once until the problem clears. The body works as-is for Discord (`content`) and Slack/Mattermost (`text`), and carries the details for Home Assistant, n8n and the like:
+
+```json
+{"event": "login_required", "source": "amazon", "message": "...", "url": "http://…:8686",
+ "time": "2026-01-01T12:00:00+00:00", "content": "...", "text": "..."}
+```
+
+**Integrations → Notifications → Send test** checks the hookup.
 
 ## Configuration
 
@@ -42,8 +63,8 @@ Everything it decides is recorded in `/data/itemizer.db` and shown on a small st
 | `RUN_TIMES` | `07:30` | Comma-separated local times (`TZ`) |
 | `RUN_ON_START` | `true` | |
 | `WEB_PORT` | `8686` | Status page |
-| `AMZN_USERNAME` / `AMZN_PASSWORD` | — | |
-| `AMZN_OTP_SECRET` | — | Authenticator secret, spaces allowed |
+| `NOTIFY_WEBHOOK_URL` | — | Where to POST notifications |
+| `PUBLIC_URL` | — | How you reach the status page; linked from notifications |
 | `AMZN_CARD_LAST4` | — | Only use Amazon charges paid with this card |
 | `AMZN_SURE_ACCOUNT` | — | Only look at this Sure account (id or part of its name) |
 | `AMZN_DOMAIN` | `amazon.com` | Other Amazon marketplaces are untested |
@@ -53,9 +74,9 @@ The Amazon variables are `AMZN_*`, not `AMAZON_*`, because the `amazon-orders` l
 ## Commands
 
 ```sh
-docker exec sure-itemizer itemizer login    # check the Amazon login and save the session
-docker exec sure-itemizer itemizer run      # one run now
-docker exec sure-itemizer itemizer status   # what was planned/applied
+docker exec -it sure-itemizer itemizer login amazon   # sign in from a console instead of the web UI
+docker exec sure-itemizer itemizer run                # one run now
+docker exec sure-itemizer itemizer status             # what was planned/applied
 ```
 
 ## Adding a merchant
@@ -68,6 +89,8 @@ A source is a subclass of `itemizer.sources.base.Source` that sets:
 - `date_window`
 
 and implements `fetch(since, amounts) -> list[Purchase]`. Each `Purchase` is one charge, with `Line`s for what it paid for. Matching, apportioning, planning and writing to Sure are shared. Register the source in `itemizer/sources/__init__.py`.
+
+If the merchant needs a sign-in, also set `login_fields` and implement `login(fields, io)`, `logout()` and `connected()`. The web UI then gives the source its own Connect page: `io.prompt(...)` inside `login` asks the user (for a code, a choice, a captcha) and returns their answer. `fetch` should raise `LoginRequired` rather than sign in unattended. The runner turns that into the *Sign-in needed* badge and a single notification.
 
 ## Status page statuses
 

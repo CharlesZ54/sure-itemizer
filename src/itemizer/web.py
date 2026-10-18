@@ -1,4 +1,4 @@
-"""A small read-only status page, plus a "run now" button."""
+"""Status page, merchant Connect pages, and a "run now" button."""
 from __future__ import annotations
 
 import html
@@ -8,32 +8,43 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from .runner import Runner
+from .auth import LoginFlow
+from .notify import Notifier
+from .runner import Runner, login_flag
+from .sources import Source
 from .state import State
 
 log = logging.getLogger(__name__)
 
 STATUS_ORDER = ["planned", "deferred", "applied", "already_split", "skipped", "unmatched", "error"]
 
-PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>Sure Itemizer</title>
-<style>
-:root{{--bg:#fff;--fg:#1d1d1f;--muted:#6e6e73;--line:#e5e5ea;--chip:#f2f2f7;--accent:#2f6fde}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#151517;--fg:#ececf1;--muted:#9a9aa3;--line:#2c2c31;--chip:#232328;--accent:#7aa7ff}}}}
-body{{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;margin:0;padding:16px}}
-main{{max-width:1100px;margin:auto}} h1{{font-size:20px;margin:0 0 4px}} .muted{{color:var(--muted)}}
-nav a{{display:inline-block;margin:8px 6px 0 0;padding:3px 10px;border-radius:12px;background:var(--chip);color:var(--fg);text-decoration:none}}
-nav a.on{{background:var(--accent);color:#fff}}
-table{{width:100%;border-collapse:collapse;margin-top:14px}} th,td{{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:top}}
-th{{font-weight:600;color:var(--muted);font-size:12px}} td.n{{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}}
-ul{{margin:0;padding-left:16px}} .wrap{{overflow-x:auto}} button{{font:inherit;padding:5px 12px;border-radius:8px;border:1px solid var(--line);background:var(--chip);color:var(--fg);cursor:pointer}}
-</style></head><body><main>
-<h1>Sure Itemizer</h1>
-<div class="muted">{mode} · last run: {last_run}</div>
-<form method="post" action="run" style="margin-top:8px"><button>Run now</button></form>
-<nav>{tabs}</nav>
-<div class="wrap"><table><tr><th>Date</th><th>Transaction</th><th class="n">Amount</th><th>Status</th><th>What</th></tr>{rows}</table></div>
-</main></body></html>"""
+STYLE = """
+:root{--bg:#fff;--fg:#1d1d1f;--muted:#6e6e73;--line:#e5e5ea;--chip:#f2f2f7;--accent:#2f6fde;--ok:#1e8e3e;--warn:#b26a00;--bad:#c5221f}
+@media (prefers-color-scheme:dark){:root{--bg:#151517;--fg:#ececf1;--muted:#9a9aa3;--line:#2c2c31;--chip:#232328;--accent:#7aa7ff;--ok:#5bd17a;--warn:#f0b450;--bad:#ff7b72}}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;margin:0;padding:16px}
+main{max-width:1100px;margin:auto} h1{font-size:20px;margin:0 0 4px} h2{font-size:15px;margin:22px 0 8px}
+a{color:var(--accent)} .muted{color:var(--muted)} .ok{color:var(--ok)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+nav a{display:inline-block;margin:8px 6px 0 0;padding:3px 10px;border-radius:12px;background:var(--chip);color:var(--fg);text-decoration:none}
+nav a.on{background:var(--accent);color:#fff}
+table{width:100%;border-collapse:collapse;margin-top:10px} th,td{text-align:left;padding:7px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-weight:600;color:var(--muted);font-size:12px} td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+ul{margin:0;padding-left:16px} .wrap{overflow-x:auto}
+button,input,select{font:inherit;color:var(--fg)}
+button{padding:5px 12px;border-radius:8px;border:1px solid var(--line);background:var(--chip);cursor:pointer}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+input{padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--bg);width:100%;max-width:340px}
+label{display:block;margin:10px 0 4px;font-weight:600}
+.card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.card .grow{flex:1;min-width:200px} form.inline{display:inline}
+.panel{border:1px solid var(--line);border-radius:12px;padding:16px;max-width:520px}
+"""
+
+
+def page(title: str, body: str) -> str:
+    return (f'<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{html.escape(title)}</title>'
+            f"<style>{STYLE}</style></head><body><main>{body}</main></body></html>")
 
 
 def _detail(row) -> str:
@@ -43,9 +54,54 @@ def _detail(row) -> str:
     return "<ul>" + "".join(f"<li>{html.escape(c['name'])} — ${html.escape(c['amount'])}</li>" for c in rows) + "</ul>"
 
 
-def make_handler(state: State, runner: Runner, dry_run: bool):
+CONNECT_JS = """
+<script>
+const base = location.pathname.replace(/\\/$/, "");
+const box = document.getElementById("flow");
+function esc(s){const d=document.createElement("div");d.textContent=s??"";return d.innerHTML}
+async function send(path, data){
+  await fetch(base + path, {method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},
+                            body:new URLSearchParams(data)});
+  poll();
+}
+let timer;
+async function poll(){
+  clearTimeout(timer);
+  const s = await (await fetch(base + "/state")).json();
+  let h = s.messages.map(m => `<div class="muted">${esc(m)}</div>`).join("");
+  if (s.state === "running") { h += `<p>Talking to the merchant…</p>`; timer = setTimeout(poll, 1500); }
+  else if (s.state === "need_input") {
+    const p = s.prompt;
+    h += `<form id="ans"><label>${esc(p.message)}</label>`;
+    if (p.image) h += `<p><img src="${esc(p.image)}" alt="captcha" style="max-width:100%"></p>`;
+    if (p.choices.length) {
+      h += p.choices.map((c,i) => `<div><label style="font-weight:400"><input type="radio" name="value" value="${i+1}" ${i==0?"checked":""} style="width:auto"> ${esc(c.replace(/^\\d+:\\s*/,""))}</label></div>`).join("");
+    } else {
+      const otp = /passcode|code/i.test(p.message);
+      h += `<input name="value" autocomplete="${otp?"one-time-code":"off"}" ${otp?'inputmode="numeric"':''} autofocus required>`;
+    }
+    h += `<p><button class="primary">Continue</button> <button type="button" id="cancel">Cancel</button></p></form>`;
+  }
+  else if (s.state === "done") { h += `<p class="ok">Connected. <a href="../">Back to status</a></p>`; }
+  else if (s.state === "failed") { h += `<p class="bad">Sign-in failed: ${esc(s.error)}</p><p><a href="">Try again</a></p>`; }
+  box.innerHTML = h;
+  const f = document.getElementById("ans");
+  if (f) {
+    f.onsubmit = e => { e.preventDefault(); send("/answer", {value: new FormData(f).get("value")}); };
+    document.getElementById("cancel").onclick = () => send("/cancel", {});
+  }
+}
+poll();
+</script>
+"""
+
+
+def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list[Source],
+                 flows: dict[str, LoginFlow], dry_run: bool, setup_error: str | None):
+    by_name = {s.name: s for s in sources}
+
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, fmt, *args):  # route through logging, quietly
+        def log_message(self, fmt, *args):  # never log bodies; paths only, quietly
             log.debug(fmt, *args)
 
         def _send(self, code: int, body: str, ctype: str = "text/html; charset=utf-8") -> None:
@@ -53,16 +109,46 @@ def make_handler(state: State, runner: Runner, dry_run: bool):
             self.send_response(code)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             self.wfile.write(data)
 
+        def _redirect(self, to: str) -> None:
+            self.send_response(303)
+            self.send_header("Location", to)
+            self.end_headers()
+
+        def _form(self) -> dict[str, str]:
+            n = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(n).decode() if n else ""
+            return {k: v[0] for k, v in parse_qs(raw, keep_blank_values=True).items()}
+
+        def _same_origin(self) -> bool:
+            # Keep other websites open in the browser from posting here.
+            origin = self.headers.get("Origin")
+            return not origin or urlparse(origin).netloc == self.headers.get("Host")
+
+        # GET ------------------------------------------------------------
+
         def do_GET(self):
-            url = urlparse(self.path)
-            if url.path == "/healthz":
+            path = urlparse(self.path).path.rstrip("/") or "/"
+            parts = path.strip("/").split("/")
+            if path == "/healthz":
                 return self._send(200, "ok", "text/plain")
-            if url.path != "/":
-                return self._send(404, "not found", "text/plain")
-            status = parse_qs(url.query).get("status", [None])[0]
+            if path == "/":
+                return self._send(200, self._status_page())
+            if len(parts) >= 2 and parts[0] == "connect" and parts[1] in by_name:
+                flow = flows[parts[1]]
+                if len(parts) == 3 and parts[2] == "state":
+                    return self._send(200, json.dumps(flow.snapshot()), "application/json")
+                if len(parts) == 2:
+                    return self._send(200, self._connect_page(by_name[parts[1]], flow))
+            self._send(404, "not found", "text/plain")
+
+        def _status_page(self) -> str:
+            query = parse_qs(urlparse(self.path).query)
+            status = query.get("status", [None])[0]
             counts = state.counts()
             tabs = [f'<a href="./" class="{"on" if not status else ""}">all {sum(counts.values())}</a>']
             for s in STATUS_ORDER:
@@ -78,22 +164,100 @@ def make_handler(state: State, runner: Runner, dry_run: bool):
                     f"<tr><td>{r['txn_date']}</td><td>{html.escape(r['txn_name'] or '')}"
                     f"<div class='muted'>{html.escape(r['reference'] or '')}</div></td>"
                     f"<td class='n'>${r['txn_amount']}</td><td>{r['status'].replace('_', ' ')}</td><td>{what}</td></tr>")
+
             runs = state.last_runs(1)
             last = "never"
             if runs:
                 r = runs[0]
-                last = f"{r['started_at']}" + (f" — failed: {html.escape(r['error'])}" if r["error"] else "")
+                last = html.escape(r["started_at"])
+                if r["error"]:
+                    last += f' — <span class="bad">failed: {html.escape(r["error"])}</span>'
+
+            cards = []
+            for s in sources:
+                if not s.login_fields:
+                    continue
+                if not s.connected():
+                    badge, btn = '<span class="muted">Not connected</span>', "Connect"
+                elif state.flag(login_flag(s)):
+                    badge, btn = '<span class="warn">Sign-in needed</span>', "Reconnect"
+                else:
+                    badge, btn = '<span class="ok">Connected</span>', "Reconnect"
+                disconnect = (f'<form class="inline" method="post" action="disconnect/{s.name}">'
+                              f'<button>Disconnect</button></form>') if s.connected() else ""
+                cards.append(f'<div class="card"><div class="grow"><b>{html.escape(s.title or s.name)}</b> · {badge}</div>'
+                             f'<a href="connect/{s.name}"><button class="primary">{btn}</button></a> {disconnect}</div>')
+            webhook = "configured" if notifier.url else "not configured (set NOTIFY_WEBHOOK_URL)"
+            cards.append(f'<div class="card"><div class="grow"><b>Notifications</b> · '
+                         f'<span class="muted">webhook {webhook}</span></div>'
+                         f'<form class="inline" method="post" action="notify/test"><button>Send test</button></form></div>')
+
             mode = "Dry run: nothing is written to Sure" if dry_run else "Live: writing to Sure"
-            self._send(200, PAGE.format(mode=mode, last_run=last, tabs="".join(tabs),
-                                        rows="".join(rows) or "<tr><td colspan=5 class='muted'>Nothing yet.</td></tr>"))
+            setup = f'<p class="bad">Setup problem: {html.escape(setup_error)}</p>' if setup_error else ""
+            body = (f"<h1>Sure Itemizer</h1><div class='muted'>{mode} · last run: {last}</div>{setup}"
+                    f'<form method="post" action="run" style="margin-top:8px"><button>Run now</button></form>'
+                    f"<h2>Integrations</h2>{''.join(cards)}"
+                    f"<h2>Transactions</h2><nav>{''.join(tabs)}</nav>"
+                    f"<div class='wrap'><table><tr><th>Date</th><th>Transaction</th><th class='n'>Amount</th>"
+                    f"<th>Status</th><th>What</th></tr>"
+                    f"{''.join(rows) or '<tr><td colspan=5 class=muted>Nothing yet.</td></tr>'}</table></div>")
+            return page("Sure Itemizer", body)
+
+        def _connect_page(self, source: Source, flow: LoginFlow) -> str:
+            title = html.escape(source.title or source.name)
+            snap = flow.snapshot()
+            if snap["state"] in ("running", "need_input"):
+                inner = '<div id="flow"></div>' + CONNECT_JS
+            else:
+                fields = "".join(
+                    f'<label for="{n}">{html.escape(label)}</label>'
+                    f'<input id="{n}" name="{n}" type="{t}" required autocomplete="{"username" if t == "email" else "current-password" if t == "password" else "off"}">'
+                    for n, label, t in source.login_fields)
+                inner = (f'<form method="post">{fields}<p><button class="primary">Sign in</button></p></form>'
+                         f'<p class="muted">Used once to sign in, then discarded. Only the session {title} issues '
+                         f'is kept. If {title} asks for a verification code, you\'ll be prompted here.</p>')
+            return page(f"Connect {title}", f'<p><a href="../">← Status</a></p><h1>Connect {title}</h1>'
+                                            f'<div class="panel">{inner}</div>')
+
+        # POST -----------------------------------------------------------
 
         def do_POST(self):
-            if urlparse(self.path).path != "/run":
-                return self._send(404, "not found", "text/plain")
-            threading.Thread(target=_safe_run, args=(runner,), daemon=True).start()
-            self.send_response(303)
-            self.send_header("Location", "./")
-            self.end_headers()
+            if not self._same_origin():
+                return self._send(403, "cross-origin request refused", "text/plain")
+            path = urlparse(self.path).path.rstrip("/")
+            parts = path.strip("/").split("/")
+
+            if path == "/run":
+                threading.Thread(target=_safe_run, args=(runner,), daemon=True).start()
+                return self._redirect("./")
+            if path == "/notify/test":
+                notifier.send("test", "Sure Itemizer: test notification. Webhooks are working.")
+                return self._redirect("../")
+            if len(parts) == 2 and parts[0] == "disconnect" and parts[1] in by_name:
+                by_name[parts[1]].logout()
+                return self._redirect("../")
+            if len(parts) >= 2 and parts[0] == "connect" and parts[1] in by_name:
+                source, flow = by_name[parts[1]], flows[parts[1]]
+                form = self._form()
+                try:
+                    if len(parts) == 2:
+                        fields = {n: form.get(n, "") for n, _, _ in source.login_fields}
+                        flow.start(lambda io: source.login(fields, io), on_success=lambda: _connected(source))
+                        return self._redirect(source.name)
+                    if parts[2] == "answer":
+                        flow.answer(form.get("value", ""))
+                        return self._send(204, "")
+                    if parts[2] == "cancel":
+                        flow.cancel()
+                        return self._send(204, "")
+                except RuntimeError as e:
+                    return self._send(409, str(e), "text/plain")
+            self._send(404, "not found", "text/plain")
+
+    def _connected(source: Source) -> None:
+        notifier.clear(login_flag(source))
+        # Catch up straight away instead of waiting for the next scheduled run.
+        threading.Thread(target=_safe_run, args=(runner,), daemon=True).start()
 
     return Handler
 
@@ -105,8 +269,11 @@ def _safe_run(runner: Runner) -> None:
         pass  # already logged and recorded by Runner.run
 
 
-def serve(port: int, state: State, runner: Runner, dry_run: bool) -> ThreadingHTTPServer:
-    server = ThreadingHTTPServer(("0.0.0.0", port), make_handler(state, runner, dry_run))
+def serve(port: int, state: State, runner: Runner, notifier: Notifier, sources: list[Source],
+          dry_run: bool, setup_error: str | None = None) -> ThreadingHTTPServer:
+    flows = {s.name: LoginFlow() for s in sources if s.login_fields}
+    handler = make_handler(state, runner, notifier, sources, flows, dry_run, setup_error)
+    server = ThreadingHTTPServer(("0.0.0.0", port), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     log.info("status page on :%d", port)
     return server

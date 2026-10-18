@@ -40,6 +40,10 @@ create table if not exists runs (
   summary     text,
   error       text
 );
+create table if not exists flags (
+  key     text primary key,
+  set_at  text not null
+);
 """
 
 
@@ -114,3 +118,15 @@ class State:
     def last_runs(self, n: int = 5) -> list[sqlite3.Row]:
         with self.lock:
             return self.db.execute("select * from runs order by id desc limit ?", (n,)).fetchall()
+
+    def flag(self, key: str) -> bool:
+        with self.lock:
+            return self.db.execute("select 1 from flags where key=?", (key,)).fetchone() is not None
+
+    def set_flag(self, key: str) -> None:
+        with self.lock, self.db:
+            self.db.execute("insert or replace into flags (key, set_at) values (?, ?)", (key, _now()))
+
+    def clear_flag(self, key: str) -> None:
+        with self.lock, self.db:
+            self.db.execute("delete from flags where key=?", (key,))

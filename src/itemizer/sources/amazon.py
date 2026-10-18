@@ -10,15 +10,18 @@ and finding the one assignment that fits every charge.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date
+from pathlib import Path
 
 from ..config import Config
 from ..models import Line, Purchase
 from ..money import to_cents
-from .base import Source
+from .base import LoginRequired, Source
 
 log = logging.getLogger(__name__)
 
@@ -203,60 +206,97 @@ def order_view(order) -> OrderView:
 
 class AmazonSource(Source):
     name = "amazon"
+    title = "Amazon"
     descriptor = re.compile(r"amazon|amzn", re.I)
     sure_search = "amazon"
     # The Transactions page date is when Amazon charged; the card usually
     # posts the same day or a few days later.
     date_window = (2, 5)
+    login_fields = [("email", "Amazon email", "email"), ("password", "Amazon password", "password")]
 
-    def __init__(self, username: str, password: str, otp_secret: str | None, data_dir,
-                 card_last4: str | None = None, account_filter: str | None = None,
-                 domain: str | None = None) -> None:
+    def __init__(self, data_dir: Path, card_last4: str | None = None,
+                 account_filter: str | None = None, domain: str | None = None) -> None:
         super().__init__(account_filter)
-        self.username = username
-        self.password = password
-        self.otp_secret = otp_secret
-        self.data_dir = data_dir
+        self.data_dir = Path(data_dir)
         self.card_last4 = card_last4
         self.domain = domain
         self._session = None
+        self._lock = threading.Lock()
 
     @classmethod
     def from_config(cls, cfg: Config) -> "AmazonSource":
-        if not cfg.amazon_username or not cfg.amazon_password:
-            raise SystemExit("The amazon source needs AMZN_USERNAME and AMZN_PASSWORD")
-        return cls(
-            username=cfg.amazon_username,
-            password=cfg.amazon_password,
-            otp_secret=cfg.amazon_otp_secret,
-            data_dir=cfg.data_dir / "amazon",
-            card_last4=cfg.amazon_card_last4,
-            account_filter=cfg.amazon_sure_account,
-            domain=cfg.amazon_domain,
+        return cls(data_dir=cfg.data_dir / "amazon", card_last4=cfg.amazon_card_last4,
+                   account_filter=cfg.amazon_sure_account, domain=cfg.amazon_domain)
+
+    @property
+    def cookie_path(self) -> Path:
+        return self.data_dir / "cookies.json"
+
+    def _new_session(self, username: str | None = None, password: str | None = None, io=None):
+        from amazonorders.conf import AmazonOrdersConfig
+        from amazonorders.session import AmazonSession, IODefault
+
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        os.chmod(self.data_dir, 0o700)
+        config = AmazonOrdersConfig(
+            config_path=str(self.data_dir / "config.yml"),
+            data={
+                "cookie_jar_path": str(self.cookie_path),
+                "output_dir": str(self.data_dir / "output"),
+                # Be a polite, low-volume client.
+                "thread_pool_size": 2,
+                "connection_pool_size": 4,
+                **({"domain": self.domain} if self.domain else {}),
+            },
         )
+        return AmazonSession(username, password, io=io or IODefault(), config=config)
 
-    def session(self):
-        if self._session is None:
-            from amazonorders.conf import AmazonOrdersConfig
-            from amazonorders.session import AmazonSession
+    # Interactive login --------------------------------------------------
 
-            self.data_dir.mkdir(parents=True, exist_ok=True)
-            config = AmazonOrdersConfig(
-                config_path=str(self.data_dir / "config.yml"),
-                data={
-                    "cookie_jar_path": str(self.data_dir / "cookies.json"),
-                    "output_dir": str(self.data_dir / "output"),
-                    # Be a polite, low-volume client.
-                    "thread_pool_size": 2,
-                    "connection_pool_size": 4,
-                    **({"domain": self.domain} if self.domain else {}),
-                },
-            )
-            self._session = AmazonSession(self.username, self.password,
-                                          otp_secret_key=self.otp_secret, config=config)
-        if not self._session.is_authenticated:
-            self._session.login()
-        return self._session
+    def connected(self) -> bool:
+        return self.cookie_path.exists()
+
+    def login(self, fields: dict[str, str], io) -> None:
+        email, password = fields.get("email", "").strip(), fields.get("password", "")
+        if not email or not password:
+            raise ValueError("email and password are required")
+        with self._lock:
+            session = self._new_session(email, password, io)
+            # Start from a clean jar so an old, half-expired session can't
+            # confuse the sign-in flow.
+            session.session.cookies.clear()
+            session.login()
+            if not session.is_authenticated:
+                raise RuntimeError("Amazon didn't accept the sign-in")
+            # Only the cookies Amazon issued are kept (written by the library
+            # as it goes); the password is dropped here.
+            session.password = None
+            if self.cookie_path.exists():
+                os.chmod(self.cookie_path, 0o600)
+            self._session = session
+        log.info("amazon: signed in; session saved")
+
+    def logout(self) -> None:
+        with self._lock:
+            self._session = None
+            self.cookie_path.unlink(missing_ok=True)
+
+    def _authed_session(self):
+        """The saved session, without ever signing in on our own."""
+        if self._session is not None and self._session.is_authenticated:
+            return self._session
+        if not self.cookie_path.exists():
+            raise LoginRequired("Amazon isn't connected yet")
+        session = self._new_session()
+        if not session.auth_cookies_stored():
+            raise LoginRequired("the saved Amazon session is incomplete; sign in again")
+        # Trust the saved cookies; if Amazon disagrees, the first request
+        # redirects to sign-in and we stop there instead of retrying.
+        session.is_authenticated = True
+        self._session = session
+        return session
+
+    # Fetching -----------------------------------------------------------
 
     def _card_ok(self, payment_method: str | None) -> bool:
         if not self.card_last4:
@@ -264,10 +304,20 @@ class AmazonSource(Source):
         return bool(payment_method) and self.card_last4 in payment_method
 
     def fetch(self, since: date, amounts: set[int] | None = None) -> list[Purchase]:
+        from amazonorders.exception import AmazonOrdersAuthError
+
+        with self._lock:
+            try:
+                return self._fetch(self._authed_session(), since, amounts)
+            except AmazonOrdersAuthError as e:
+                self._session = None
+                raise LoginRequired(f"Amazon wants you to sign in again ({e.__class__.__name__})") from e
+
+    def _fetch(self, session, since: date, amounts: set[int] | None) -> list[Purchase]:
+        from amazonorders.exception import AmazonOrdersAuthError
         from amazonorders.orders import AmazonOrders
         from amazonorders.transactions import AmazonTransactions
 
-        session = self.session()
         days = (date.today() - since).days + 1
         raw = AmazonTransactions(session).get_transactions(days=days)
         log.info("amazon: %d transactions in the last %d days", len(raw), days)
@@ -299,6 +349,8 @@ class AmazonSource(Source):
                 continue
             try:
                 view = order_view(orders.get_order(number))
+            except AmazonOrdersAuthError:
+                raise
             except Exception as e:  # one unreadable order shouldn't sink the run
                 log.warning("amazon: couldn't read order %s: %s", number, e)
                 for c in charges:
