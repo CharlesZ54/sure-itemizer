@@ -13,6 +13,8 @@ import logging
 import re
 import time
 
+from playwright.sync_api import Error as PlaywrightError
+
 log = logging.getLogger(__name__)
 
 HOME = "https://www.target.com/"
@@ -74,7 +76,8 @@ class TargetSignIn:
         while time.monotonic() < deadline:
             page.wait_for_timeout(700)
 
-            if _visible(page, HUMAN_CHECK):
+            if _seen(page, HUMAN_CHECK):
+                log.info("target sign-in: human check at %s; handing over", page.url.split("?")[0])
                 self.io.handoff(context, pages, "Target wants to check you're human: press and hold its button "
                                 "until it finishes, then press Continue.",
                                 until=lambda ctx: not _visible(page, HUMAN_CHECK))
@@ -139,17 +142,20 @@ class TargetSignIn:
 
             # Still on the shop: open the account panel and its Sign in button.
             if opened_sign_in < 3 and page.locator(ACCOUNT).count():
-                button = page.get_by_role("button", name=SIGN_IN_BUTTON)
-                if not (button.count() and button.first.is_visible()):
-                    page.locator(ACCOUNT).first.click()
-                    page.wait_for_timeout(1500)
+                try:
                     button = page.get_by_role("button", name=SIGN_IN_BUTTON)
-                if button.count() and button.first.is_visible():
-                    opened_sign_in += 1
-                    button.first.click()
-                    page.wait_for_timeout(2500)
-                    progressed()
-                    continue
+                    if not (button.count() and button.first.is_visible()):
+                        page.locator(ACCOUNT).first.click(timeout=5000)
+                        page.wait_for_timeout(1500)
+                        button = page.get_by_role("button", name=SIGN_IN_BUTTON)
+                    if button.count() and button.first.is_visible():
+                        opened_sign_in += 1
+                        button.first.click(timeout=5000)
+                        page.wait_for_timeout(2500)
+                        progressed()
+                        continue
+                except PlaywrightError:
+                    continue  # something covered it (a check?); look again
 
             if time.monotonic() - last_change > STUCK_AFTER:
                 log.info("target sign-in: unrecognized page %r at %s; handing over",
@@ -182,6 +188,18 @@ def _channel_choices(page) -> list:
         if found:
             return found
     return []
+
+
+def _seen(page, selector: str, window: float = 1.0) -> bool:
+    """Visible at any point during `window` seconds: a check that blinks while
+    loading is still there, even if one glance lands on a blink."""
+    end = time.monotonic() + window
+    while True:
+        if _visible(page, selector):
+            return True
+        if time.monotonic() >= end:
+            return False
+        page.wait_for_timeout(150)
 
 
 def _visible(page, selector: str) -> bool:

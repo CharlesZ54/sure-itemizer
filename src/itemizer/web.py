@@ -191,7 +191,11 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
         # GET ------------------------------------------------------------
 
         def do_GET(self):
-            path = urlparse(self.path).path.rstrip("/") or "/"
+            url = urlparse(self.path)
+            if url.path != "/" and url.path.endswith("/"):
+                # One address per page: relative links and redirects assume no trailing slash.
+                return self._redirect(url.path.rstrip("/") + (f"?{url.query}" if url.query else ""))
+            path = url.path or "/"
             parts = path.strip("/").split("/")
             if path == "/healthz":
                 return self._send(200, "ok", "text/plain")

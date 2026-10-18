@@ -168,3 +168,42 @@ def test_human_check_is_handed_to_the_user_then_the_script_continues():
     assert flow.snapshot()["state"] == "done", flow.snapshot()
     assert live.snapshot()["state"] == "handed_back"
     assert [p for p, _ in fake.posts] == ["/email", "/check"]
+
+
+# A check that blinks on and off by itself while it loads, then goes away.
+FLICKERING_CHECK = """<div id="px-captcha-modal" style="position:fixed;left:0;top:0;width:100%;height:100%;background:#eee">
+  Press &amp; hold</div><script>
+  // Mostly visible, with brief blinks, for ~5 s; then gone for good.
+  // (Random gaps, so the blinks don't line up with anyone's polling.)
+  const m = document.getElementById('px-captcha-modal'); const end = Date.now() + 5000;
+  (function blink() {
+    if (Date.now() > end) { m.remove(); return; }
+    m.style.display = 'none';
+    setTimeout(() => { m.style.display = 'block'; setTimeout(blink, 150 + Math.random() * 250); }, 120);
+  })();
+</script>"""
+
+
+def test_a_flickering_check_is_one_hand_off_not_a_ping_pong():
+    fake = FakeTarget()
+    # Serve the flickering check on the home page.
+    global HUMAN_CHECK
+    original, HUMAN_CHECK = HUMAN_CHECK, FLICKERING_CHECK
+    fake.human_check = True
+    attaches = []
+
+    class CountingLive(LiveBrowser):
+        def attach(self, *a, **kw):
+            attaches.append(time.time())
+            return super().attach(*a, **kw)
+
+    try:
+        flow = LoginFlow(live=CountingLive())
+        flow.start(lambda io: sign_in(fake, io))
+        deadline = time.time() + 45
+        while flow.snapshot()["state"] not in ("done", "failed") and time.time() < deadline:
+            time.sleep(0.1)
+        assert flow.snapshot()["state"] == "done", flow.snapshot()
+        assert len(attaches) == 1, f"handed over {len(attaches)} times"
+    finally:
+        HUMAN_CHECK = original

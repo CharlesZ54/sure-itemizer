@@ -290,3 +290,19 @@ class TestTargetSource:
         assert not t.connected()
         with pytest.raises(LoginRequired):
             t.fetch(date.today())
+
+
+def test_trailing_slash_addresses_redirect_to_the_canonical_page(tmp_path):
+    source = OtpSource()
+    runner, state, notifier = make_runner(tmp_path, source)
+    server = serve(0, state, runner, notifier, [source], dry_run=True)
+
+    class NoFollow(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *a, **kw):
+            return None
+
+    opener = urllib.request.build_opener(NoFollow)
+    with pytest.raises(urllib.error.HTTPError) as e:
+        opener.open(f"http://127.0.0.1:{server.server_port}/connect/shop/?x=1")
+    assert e.value.code == 303 and e.value.headers["Location"] == "/connect/shop?x=1"
+    server.shutdown()

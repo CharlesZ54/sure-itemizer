@@ -20,6 +20,7 @@ log = logging.getLogger(__name__)
 VIEWPORT = {"width": 1100, "height": 820}
 IDLE_TIMEOUT = 600  # seconds without input before the browser is closed
 FRAME_EVERY = 0.35  # seconds between screenshots while someone is watching
+SETTLE = 3.0  # seconds the goal must hold before the view finishes on its own
 CHROME_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{major}.0.0.0 Safari/537.36"
 SPECIAL_KEYS = {"Enter", "Tab", "Backspace", "Delete", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp",
                 "ArrowDown", "Home", "End", "PageUp", "PageDown"}
@@ -143,6 +144,9 @@ class LiveBrowser:
 
     def _loop(self, context, pages, signed_in) -> bool:
         last_input = time.monotonic()
+        # The goal must hold steadily, not for one frame: a challenge that
+        # flickers while it loads isn't finished just because it blinked.
+        held_since: float | None = None
         while True:
             page = next((p for p in reversed(pages) if not p.is_closed()), None)
             if page is None:
@@ -164,7 +168,15 @@ class LiveBrowser:
                     self._apply(page, cmd)
                 except Exception as e:  # a stray click shouldn't end the session
                     log.debug("input failed: %s", e)
-            if signed_in(context):
+            try:
+                reached = bool(signed_in(context))
+            except Exception:
+                reached = False
+            if not reached:
+                held_since = None
+            elif held_since is None:
+                held_since = time.monotonic()
+            elif time.monotonic() - held_since >= SETTLE:
                 return True
             if time.monotonic() - last_input > IDLE_TIMEOUT:
                 self._set(error="closed after 10 minutes without input")
