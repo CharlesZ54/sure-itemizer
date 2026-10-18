@@ -77,6 +77,8 @@ class State:
             reference = plan.purchase.reference if plan.purchase else None
             if plan.children:
                 detail = json.dumps([{"name": n, "amount": cents_to_str(c)} for n, c in plan.children])
+            elif plan.name:
+                detail = json.dumps({"rename": plan.name})
         now = _now()
         with self.lock, self.db:
             self.db.execute(

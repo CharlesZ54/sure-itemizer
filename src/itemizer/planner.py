@@ -11,13 +11,19 @@ def child_name(name: str, quantity: int) -> str:
     return f"{name} (x{quantity})" if quantity > 1 else name
 
 
+ORIGINAL_MARKER = "[itemizer] bank: "
+MAX_DESCRIPTION = 160
+
+
 def plan(txn: SureTxn, purchase: Purchase) -> Plan:
     if purchase.problem:
         return Plan(txn, purchase, "skip", purchase.problem)
-    if not purchase.lines:
-        return Plan(txn, purchase, "skip", "no line items")
     if purchase.amount_cents != txn.amount_cents:
         return Plan(txn, purchase, "skip", "amount changed since matching")
+    if purchase.description is not None:
+        return rename(txn, purchase)
+    if not purchase.lines:
+        return Plan(txn, purchase, "skip", "no line items")
 
     # A single item is still "split" into one row. By the time we see a
     # charge, Sure's AI rule has usually already categorized and locked it
@@ -28,3 +34,17 @@ def plan(txn: SureTxn, purchase: Purchase) -> Plan:
     if any(cents == 0 for _, cents in children):
         return Plan(txn, purchase, "skip", "an item would get a $0.00 share")
     return Plan(txn, purchase, "split", children=children)
+
+
+def rename(txn: SureTxn, purchase: Purchase) -> Plan:
+    """Give the transaction a readable name; the bank's text moves to the notes."""
+    name = " ".join(purchase.description.split())
+    if len(name) > MAX_DESCRIPTION:
+        name = name[: MAX_DESCRIPTION - 1].rstrip() + "…"
+    if not name:
+        return Plan(txn, purchase, "skip", "nothing to describe")
+    if txn.name == name:
+        return Plan(txn, purchase, "skip", "already described")
+    existing = txn.notes or ""
+    notes = existing if ORIGINAL_MARKER in existing else f"{existing}\n{ORIGINAL_MARKER}{txn.name}".strip()
+    return Plan(txn, purchase, "rename", name=name, notes=notes)

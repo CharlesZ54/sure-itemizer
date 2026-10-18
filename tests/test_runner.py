@@ -71,6 +71,13 @@ class FakeSure:
                     return self._json(404, {"error": "not_found", "message": "Transaction is not split"})
                 self._json(404, {"error": "not_found"})
 
+            def do_PATCH(self):
+                body = self._body()
+                fake.calls.append(("PATCH", self.path, body))
+                tid = self.path.rsplit("/", 1)[1]
+                fake.txns[tid].update(body["transaction"])
+                self._json(200, fake.txns[tid])
+
             def do_POST(self):
                 body = self._body()
                 fake.calls.append(("POST", self.path, body))
@@ -178,3 +185,17 @@ def test_no_candidates_means_no_merchant_login(env):
     runner, source, _ = env(fake, [])
     runner.run()
     assert source.fetches == 0
+
+
+def test_renames_go_to_sure_as_name_and_notes(env):
+    fake = FakeSure()
+    fake.add("v1", 2, 3809, "Transfer to Venmo - VENMO PAYMENT")
+    purchase = Purchase(source="amazon", external_id="x", date=TODAY - timedelta(days=3), amount_cents=3809,
+                        description="Venmo to Alex Doe: pizza")
+    runner, _, state = env(fake, [purchase])
+    fake.txns["v1"]["name"] = "Amazon - VENMO PAYMENT"  # FakeSource claims names matching "amazon"
+    assert runner.run()["applied"] == 1
+    patch = next(c for c in fake.calls if c[0] == "PATCH")
+    assert patch[2]["transaction"]["name"] == "Venmo to Alex Doe: pizza"
+    assert "[itemizer] bank: Amazon - VENMO PAYMENT" in patch[2]["transaction"]["notes"]
+    assert not [c for c in fake.calls if c[0] == "POST"]

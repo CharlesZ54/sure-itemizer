@@ -54,8 +54,10 @@ def page(title: str, body: str) -> str:
 def _detail(row) -> str:
     if not row["detail"]:
         return ""
-    rows = json.loads(row["detail"])
-    return "<ul>" + "".join(f"<li>{html.escape(c['name'])} — ${html.escape(c['amount'])}</li>" for c in rows) + "</ul>"
+    detail = json.loads(row["detail"])
+    if isinstance(detail, dict):  # a rename
+        return f"→ <b>{html.escape(detail.get('rename', ''))}</b>"
+    return "<ul>" + "".join(f"<li>{html.escape(c['name'])} — ${html.escape(c['amount'])}</li>" for c in detail) + "</ul>"
 
 
 CONNECT_JS = """

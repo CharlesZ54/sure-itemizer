@@ -81,6 +81,12 @@ class SureClient:
             raise SureError(f"split failed ({r.status_code}): {_json(r).get('errors') or r.text[:200]}")
         return [c["id"] for c in r.json().get("children", [])]
 
+    def describe(self, txn_id: str, name: str, notes: str | None) -> None:
+        body = {"transaction": {"name": name, **({"notes": notes} if notes is not None else {})}}
+        r = self._call("PATCH", f"/transactions/{txn_id}", json=body)
+        if r.status_code != 200:
+            raise SureError(f"renaming failed ({r.status_code}): {_json(r).get('message') or r.text[:200]}")
+
 
 def _no_route(r: requests.Response) -> bool:
     # An unknown route is Rails' generic 404 -- HTML, or {"status":404,"error":"Not Found"}

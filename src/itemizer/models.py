@@ -34,6 +34,9 @@ class Purchase:
     reference: str | None = None  # e.g. an Amazon order number
     # Set when the source found the charge but could not tell what was in it.
     problem: str | None = None
+    # Set by sources that describe a transaction instead of splitting it
+    # (one thing paid for, e.g. a Venmo payment): the transaction's new name.
+    description: str | None = None
 
 
 @dataclass(frozen=True)
@@ -54,7 +57,10 @@ class Plan:
 
     txn: SureTxn
     purchase: Purchase | None
-    action: str  # "split" | "skip"
+    action: str  # "split" | "rename" | "skip"
     reason: str = ""
     # For "split": [(name, signed cents)].
     children: list[tuple[str, int]] = field(default_factory=list)
+    # For "rename": the new name, and the notes (keeping the bank's original text).
+    name: str | None = None
+    notes: str | None = None

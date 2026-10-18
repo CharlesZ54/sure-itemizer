@@ -93,6 +93,13 @@ class Runner:
             if p.action == "skip":
                 return self._record(p, source, "skipped")
 
+            if p.action == "rename":
+                if self.cfg.dry_run:
+                    return self._record(p, source, "planned", "dry run")
+                self.sure.describe(t.id, p.name, p.notes)
+                log.info("renamed %s %s -> %s", t.date, t.name, p.name)
+                return self._record(p, source, "applied")
+
             try:
                 if self.sure.split_state(t.id):
                     return self._record(p, source, "already_split", "already split in Sure")
