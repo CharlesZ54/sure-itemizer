@@ -18,6 +18,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ".[test]"
+      - run: playwright install --with-deps chromium
       - run: pytest -q
 
   image:

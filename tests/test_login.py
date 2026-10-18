@@ -235,7 +235,4 @@ class TestAmazonSession:
         with pytest.raises(ValueError):
             AmazonSource(tmp_path / "amazon").login({"email": "", "password": ""}, None)
 
-    def test_sign_in_hands_javascript_challenges_to_a_browser(self, tmp_path):
-        session = AmazonSource(tmp_path / "amazon")._new_session("a@b.c", "pw")
-        names = {type(f).__name__ for f in session.auth_forms}
-        assert {"PlaywrightAcicForm", "PlaywrightJSAuthForm"} <= names
+

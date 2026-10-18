@@ -246,14 +246,6 @@ class AmazonSource(Source):
                 # Be a polite, low-volume client.
                 "thread_pool_size": 2,
                 "connection_pool_size": 4,
-                # Amazon sometimes answers a sign-in with a JavaScript check
-                # that plain HTTP can't pass; these hand just that step to
-                # headless Chromium and carry its cookies back.
-                "auth_forms_classes": [
-                    "amazonorders.contrib.browser.playwright.PlaywrightAcicForm",
-                    "amazonorders.contrib.browser.playwright.PlaywrightJSAuthForm",
-                ],
-                "browser": "chromium",
                 **({"domain": self.domain} if self.domain else {}),
             },
         )
@@ -268,17 +260,26 @@ class AmazonSource(Source):
         email, password = fields.get("email", "").strip(), fields.get("password", "")
         if not email or not password:
             raise ValueError("email and password are required")
+        from .amazon_browser import HeadlessSignIn
+
         with self._lock:
-            session = self._new_session(email, password, io)
-            # Start from a clean jar so an old, half-expired session can't
-            # confuse the sign-in flow.
-            session.session.cookies.clear()
-            session.login()
-            if not session.is_authenticated:
-                raise RuntimeError("Amazon didn't accept the sign-in")
-            # Only the cookies Amazon issued are kept (written by the library
-            # as it goes); the password is dropped here.
-            session.password = None
+            # A failed reconnect must not leave a half-written session behind,
+            # nor destroy one that still worked.
+            previous = self.cookie_path.read_bytes() if self.cookie_path.exists() else None
+            try:
+                # The password goes to the browser only; the session object
+                # never holds it.
+                session = self._new_session(email, None, io)
+                session.session.cookies.clear()
+                HeadlessSignIn(session, io).sign_in(email, password)
+                if not session.is_authenticated:
+                    raise RuntimeError("Amazon didn't accept the sign-in")
+            except BaseException:
+                if previous is None:
+                    self.cookie_path.unlink(missing_ok=True)
+                else:
+                    self.cookie_path.write_bytes(previous)
+                raise
             if self.cookie_path.exists():
                 os.chmod(self.cookie_path, 0o600)
             self._session = session
