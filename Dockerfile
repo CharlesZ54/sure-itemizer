@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
-# tzdata so RUN_TIMES follow the TZ Unraid passes in
-RUN apt-get update && apt-get install -y --no-install-recommends tzdata \
+# tzdata so RUN_TIMES follow the TZ Unraid passes in; tini reaps the browser's
+# leftover processes after a sign-in (Python as PID 1 would leave zombies)
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata tini \
     && rm -rf /var/lib/apt/lists/*
 
 # Headless Chromium for Amazon's JavaScript sign-in challenge. Shared path so
@@ -27,5 +28,5 @@ VOLUME /data
 EXPOSE 8686
 USER 99:100
 HEALTHCHECK --interval=60s --timeout=5s CMD python -c "import os,urllib.request;urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"WEB_PORT\",\"8686\")}/healthz')"
-ENTRYPOINT ["itemizer"]
+ENTRYPOINT ["tini", "--", "itemizer"]
 CMD ["serve"]
