@@ -41,7 +41,7 @@ label{display:block;margin:10px 0 4px;font-weight:600}
 .panel{border:1px solid var(--line);border-radius:12px;padding:16px;max-width:520px}
 .bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:10px 0}
 #screen{max-width:1100px;border:1px solid var(--line);border-radius:8px;overflow:hidden;outline:none;background:#fff}
-#screen:focus{border-color:var(--accent)} #frame{display:block;width:100%;height:auto;cursor:pointer;min-height:200px}
+#screen:focus{border-color:var(--accent)} #frame{display:block;width:100%;height:auto;cursor:pointer;min-height:200px;touch-action:none;user-select:none;-webkit-user-select:none}
 """
 
 
@@ -86,6 +86,10 @@ async function poll(){
     }
     h += `<p><button class="primary">Continue</button> <button type="button" id="cancel">Cancel</button></p></form>`;
   }
+  else if (s.state === "live") {
+    h += `<p>${esc(s.prompt.message)}</p><p>Opening the live view… <a href="${base}/live">open it</a></p>`;
+    location.href = base + "/live";
+  }
   else if (s.state === "done") { h += `<p class="ok">Connected. <a href="../">Back to status</a></p>`; }
   else if (s.state === "failed") { h += `<p class="bad">Sign-in failed: ${esc(s.error)}</p><p><a href="">Try again</a></p>`; }
   box.innerHTML = h;
@@ -109,10 +113,12 @@ let shownAt = 0, finished = false;
 const post = (path, body) => fetch(base + path, {method: "POST", headers: {"Content-Type": "application/json"},
                                                   body: JSON.stringify(body || {})});
 const input = cmd => post("/input", cmd);
-img.addEventListener("click", e => {
-  screenEl.focus();
-  input({type: "click", x: e.offsetX / img.clientWidth, y: e.offsetY / img.clientHeight});
-});
+// Pointer down/up rather than click, so press-and-hold checks work (mouse and touch).
+const at = e => ({x: e.offsetX / img.clientWidth, y: e.offsetY / img.clientHeight});
+img.addEventListener("pointerdown", e => { e.preventDefault(); screenEl.focus(); img.setPointerCapture(e.pointerId); input({type: "down", ...at(e)}); });
+img.addEventListener("pointerup", e => { e.preventDefault(); input({type: "up"}); });
+img.addEventListener("pointercancel", () => input({type: "up"}));
+img.addEventListener("contextmenu", e => e.preventDefault());
 screenEl.addEventListener("wheel", e => { e.preventDefault(); input({type: "scroll", dy: e.deltaY}); }, {passive: false});
 const SPECIAL = new Set(["Enter","Tab","Backspace","Delete","Escape","ArrowLeft","ArrowRight","ArrowUp","ArrowDown","Home","End","PageUp","PageDown"]);
 screenEl.addEventListener("keydown", e => {
@@ -132,9 +138,11 @@ async function tick() {
   try {
     const s = await (await fetch(base + "/state")).json();
     if (s.state === "running" || s.state === "starting") {
-      statusEl.textContent = s.state === "starting" ? "Starting the browser…" : "Click into the page to type.";
+      statusEl.textContent = s.state === "starting" ? "Starting the browser…" : (s.reason || "Click into the page to type.");
+      document.getElementById("done").textContent = s.reason ? "Continue" : "I'm signed in";
       if (s.frame_at && s.frame_at !== shownAt) { shownAt = s.frame_at; img.src = base + "/frame.jpg?t=" + s.frame_at; }
     } else if (s.state === "saving") { statusEl.textContent = "Saving the session…"; }
+    else if (s.state === "handed_back") { finished = true; location.href = base.replace(/\\/live$/, ""); }
     else if (s.state === "done") { finished = true; statusEl.innerHTML = '<span class="ok">Connected.</span> <a href="../../">Back to status</a>'; }
     else if (s.state === "failed") { finished = true; statusEl.innerHTML = '<span class="bad"></span> <a href="">Start again</a>'; statusEl.firstChild.textContent = s.error || "Closed"; }
   } catch (e) {}
@@ -365,8 +373,8 @@ def _safe_run(runner: Runner) -> None:
 
 def serve(port: int, state: State, runner: Runner, notifier: Notifier, sources: list[Source],
           dry_run: bool, setup_error: str | None = None) -> ThreadingHTTPServer:
-    flows = {s.name: LoginFlow() for s in sources if s.login_fields}
     lives = {s.name: LiveBrowser() for s in sources if s.live_url}
+    flows = {s.name: LoginFlow(live=lives.get(s.name)) for s in sources if s.login_fields}
     handler = make_handler(state, runner, notifier, sources, flows, dry_run, setup_error, lives)
     server = ThreadingHTTPServer(("0.0.0.0", port), handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

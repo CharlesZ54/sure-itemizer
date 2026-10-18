@@ -1,10 +1,10 @@
 """Target: purchases made with a Target Circle Card (debit or credit), which
 Target links to the account, in-store receipts included.
 
-Signing in happens in the live browser view (Target's sign-in varies between
-password and one-time codes, and sits behind bot protection). The browser's
-session is saved as Playwright storage state, and later runs open Target's
-own order pages headlessly with it.
+Signing in: the Connect form (target_browser.py) signs in for the user and
+hands Target's "Press & hold" human check, or any step it doesn't recognize,
+to the live browser view. The browser's session is saved as Playwright
+storage state, and later runs open Target's own order pages headlessly with it.
 """
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ class TargetSource(Source):
     # few after the purchase.
     date_window = (1, 6)
     live_url = "https://www.target.com/account"
+    login_fields = [("email", "Target email", "email"), ("password", "Target password", "password")]
 
     def __init__(self, data_dir: Path, account_filter: str | None = None) -> None:
         super().__init__(account_filter)
@@ -55,11 +56,39 @@ class TargetSource(Source):
     def connected(self) -> bool:
         return self.state_path.exists()
 
+    def live_signed_in(self, context) -> bool:
+        from .target_browser import signed_in
+
+        return any(signed_in(p) for p in context.pages if not p.is_closed())
+
     def live_save(self, context) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         os.chmod(self.data_dir, 0o700)
         context.storage_state(path=str(self.state_path))
         os.chmod(self.state_path, 0o600)
+
+    def login(self, fields: dict[str, str], io) -> None:
+        """Sign in from the Connect form; steps only a person can do are handed to the live view."""
+        from playwright.sync_api import sync_playwright
+
+        from ..livebrowser import CHROME_UA, VIEWPORT
+        from .target_browser import TargetSignIn
+
+        email, password = fields.get("email", "").strip(), fields.get("password", "")
+        if not email or not password:
+            raise ValueError("email and password are required")
+        with self._lock, sync_playwright() as pw:
+            browser = pw.chromium.launch(headless=True, channel="chromium",
+                                         args=["--disable-blink-features=AutomationControlled"])
+            try:
+                context = browser.new_context(locale="en-US", viewport=VIEWPORT,
+                                              user_agent=CHROME_UA.format(major=browser.version.split(".")[0]))
+                TargetSignIn(io).run(context, context.new_page(), email, password)
+                # Only a finished sign-in replaces the saved session.
+                self.live_save(context)
+            finally:
+                browser.close()
+        log.info("target: signed in; session saved")
 
     def logout(self) -> None:
         self.state_path.unlink(missing_ok=True)

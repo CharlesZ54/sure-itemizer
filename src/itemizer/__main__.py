@@ -35,6 +35,9 @@ class ConsoleIO:
     def echo(self, msg, **kwargs):
         print(msg)
 
+    def handoff(self, context, pages, reason, until):
+        raise SystemExit(f"{reason}. That step needs the web UI's Connect page (live view).")
+
     def prompt(self, msg, type=None, **kwargs):
         for choice in kwargs.get("choices") or []:
             print(" ", choice)

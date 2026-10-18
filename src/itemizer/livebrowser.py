@@ -30,8 +30,10 @@ class LiveBrowser:
 
     def __init__(self) -> None:
         self.lock = threading.Lock()
-        self.state = "idle"  # idle | starting | running | saving | done | failed
+        self.state = "idle"  # idle | starting | running | saving | done | failed | handed_back
         self.error: str | None = None
+        # Why the user is looking (set when a scripted sign-in hands over).
+        self.reason = ""
         self.url = ""
         self.frame: bytes | None = None
         self.frame_at = 0.0
@@ -46,7 +48,7 @@ class LiveBrowser:
         with self.lock:
             if self.state in ("starting", "running", "saving"):
                 return  # already open; the page just reconnects to it
-            self.state, self.error, self.frame, self.url = "starting", None, None, ""
+            self.state, self.error, self.frame, self.url, self.reason = "starting", None, None, "", ""
             self._cmds = queue.Queue()
         threading.Thread(target=self._run, args=(url, signed_in, save, user_agent, init_script, on_success),
                          daemon=True).start()
@@ -54,18 +56,48 @@ class LiveBrowser:
     def send(self, cmd: dict) -> None:
         with self.lock:
             if self.state != "running":
+                if cmd.get("type") == "up":
+                    return  # a finger lifting after the browser was handed back
                 raise RuntimeError("the browser isn't open")
         self._cmds.put(cmd)
 
     def snapshot(self) -> dict:
         with self.lock:
             self._watched_at = time.monotonic()
-            return {"state": self.state, "error": self.error, "url": self.url, "frame_at": self.frame_at}
+            return {"state": self.state, "error": self.error, "url": self.url, "frame_at": self.frame_at,
+                    "reason": self.reason}
 
     def latest_frame(self) -> bytes | None:
         with self.lock:
             self._watched_at = time.monotonic()
             return self.frame
+
+    def claim(self, reason: str) -> None:
+        """Mark the view as taken by a hand-off, so a page opening now won't start a second browser."""
+        with self.lock:
+            if self.state != "running" or self.reason != reason:
+                self.state, self.error, self.frame, self.reason = "running", None, None, reason
+                self._cmds = queue.Queue()
+
+    def attach(self, context, pages: list, until: Callable[[Any], bool], reason: str) -> bool:
+        """Hand an already-open browser to the user until `until(context)` holds or they press Continue.
+
+        Runs in the calling thread, which must be the one driving the browser
+        (a scripted sign-in that met something only a person can do). Returns
+        False if the user cancels or walks away.
+        """
+        self.claim(reason)
+        ok = self._loop(context, pages, until)
+        # The check may clear while the user is still holding the button; let go
+        # before the script carries on.
+        for page in pages:
+            try:
+                if not page.is_closed():
+                    page.mouse.up()
+            except Exception:
+                pass
+        self._set(state="handed_back" if ok else "failed", reason="")
+        return ok
 
     # Browser thread ------------------------------------------------------
 
@@ -148,10 +180,16 @@ class LiveBrowser:
     @staticmethod
     def _apply(page, cmd: dict) -> None:
         kind = cmd.get("type")
-        if kind == "click":
+        if kind in ("click", "down"):
             x = float(cmd["x"]) * VIEWPORT["width"]
             y = float(cmd["y"]) * VIEWPORT["height"]
-            page.mouse.click(x, y)
+            if kind == "click":
+                page.mouse.click(x, y)
+            else:  # press-and-hold: the button stays down until "up"
+                page.mouse.move(x, y, steps=5)
+                page.mouse.down()
+        elif kind == "up":
+            page.mouse.up()
         elif kind == "scroll":
             page.mouse.wheel(0, max(-2000, min(2000, float(cmd.get("dy", 0)))))
         elif kind == "text":

@@ -42,11 +42,16 @@ The page is plain HTTP, so your Amazon password crosses your LAN unencrypted whe
 
 ## Connecting Target
 
-Target's sign-in changes between a password and one-time codes and sits behind bot protection, so you sign in yourself: **Integrations → Target → Connect** opens a live view of a browser running in the container, on Target's own page. Click and type as usual (on a phone, use the *Type here* box). When you're signed in, press **I'm signed in**. Only the browser's session is kept (`/data/target/state.json`, mode 600).
+**Integrations → Target → Connect** works like Amazon's: type your Target email and password, and the service signs in on Target's real page in the container's browser, preferring the password when Target also offers a code. If Target sends a one-time code, you're asked where to send it and then for the code.
 
-Target links purchases made with a Target Circle Card to your account, in-store ones included. In the bank they show up as `TARGET DEBIT CRD` pulls a day or few after the purchase.
+Two things are never scripted, and come to you instead through a **live view** of that same browser:
 
-The same live view is a fallback for Amazon: its Connect page has an *Or sign in yourself…* link.
+- **Target's "Press & hold" check** (bot protection). You hold the button in the live view (mouse or finger), then press **Continue**. Automating that check is not something this does.
+- **Any step the script doesn't recognize.** You finish it in the live view and press **Continue**, and the script carries on.
+
+Only the browser's session is kept (`/data/target/state.json`, mode 600). Target links purchases made with a Target Circle Card to your account, in-store ones included. In the bank they show up as `TARGET DEBIT CRD` pulls a day or few after the purchase.
+
+The live view is also available on its own from either Connect page (*Or sign in yourself…*).
 
 ## Notifications
 

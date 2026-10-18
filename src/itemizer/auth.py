@@ -35,13 +35,19 @@ class WebIO:
         answer = self.flow._ask(msg, kwargs.get("choices") or [], kwargs.get("img_url"))
         return type(answer) if type else answer
 
+    def handoff(self, context: Any, pages: list, reason: str, until: Callable[[Any], bool]) -> None:
+        """Let the user take over the browser (live view) until `until` holds or they press Continue."""
+        self.flow._handoff(context, pages, reason, until)
+
 
 class LoginFlow:
     """At most one login in progress per source."""
 
-    def __init__(self) -> None:
+    def __init__(self, live: Any = None) -> None:
         self.lock = threading.Lock()
-        self.state = "idle"  # idle | running | need_input | done | failed
+        # The source's LiveBrowser, for handing the browser to the user mid-login.
+        self.live = live
+        self.state = "idle"  # idle | running | need_input | live | done | failed
         self.prompt: dict | None = None
         self.messages: list[str] = []
         self.error: str | None = None
@@ -49,7 +55,7 @@ class LoginFlow:
 
     def start(self, login: Callable[[WebIO], None], on_success: Callable[[], None] | None = None) -> None:
         with self.lock:
-            if self.state in ("running", "need_input"):
+            if self.state in ("running", "need_input", "live"):
                 raise RuntimeError("a login is already in progress")
             self.state, self.prompt, self.messages, self.error = "running", None, [], None
             self._answers = queue.Queue()
@@ -84,6 +90,20 @@ class LoginFlow:
         with self.lock:
             self.state, self.prompt = "running", None
         return answer
+
+    def _handoff(self, context: Any, pages: list, reason: str, until: Callable[[Any], bool]) -> None:
+        if self.live is None:
+            raise LoginCancelled(f"{reason} (this needs the web UI's live view)")
+        self.live.claim(reason)  # before the page is told to open the live view
+        with self.lock:
+            self.state, self.prompt = "live", {"message": reason, "choices": [], "image": None}
+        try:
+            if not self.live.attach(context, pages, until, reason):
+                raise LoginCancelled(self.live.snapshot()["error"] or "login cancelled")
+        finally:
+            with self.lock:
+                if self.state == "live":
+                    self.state, self.prompt = "running", None
 
     def answer(self, value: str) -> None:
         with self.lock:
