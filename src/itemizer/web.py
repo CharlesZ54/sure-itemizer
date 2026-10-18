@@ -40,6 +40,7 @@ label{display:block;margin:10px 0 4px;font-weight:600}
 .card .grow{flex:1;min-width:200px} form.inline{display:inline}
 .panel{border:1px solid var(--line);border-radius:12px;padding:16px;max-width:520px}
 .bar{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:10px 0}
+tr.f th{padding:2px 4px 8px} tr.f input,tr.f select{width:100%;max-width:none;min-width:70px;padding:4px 6px;font-size:12px;border-radius:6px;border:1px solid var(--line);background:var(--bg)}
 #screen{max-width:1100px;border:1px solid var(--line);border-radius:8px;overflow:hidden;outline:none;background:#fff}
 #screen:focus{border-color:var(--accent)} #frame{display:block;width:100%;height:auto;cursor:pointer;min-height:200px;touch-action:none;user-select:none;-webkit-user-select:none}
 """
@@ -58,6 +59,43 @@ def _detail(row) -> str:
     if isinstance(detail, dict):  # a rename
         return f"→ <b>{html.escape(detail.get('rename', ''))}</b>"
     return "<ul>" + "".join(f"<li>{html.escape(c['name'])} — ${html.escape(c['amount'])}</li>" for c in detail) + "</ul>"
+
+
+# Column filters for the transactions table: a text box matches anywhere in
+# the cell, a dropdown matches the whole cell. Kept in the address bar so a
+# filtered view can be reloaded or bookmarked.
+FILTER_JS = """
+<script>
+const table = document.getElementById("txns");
+const boxes = [...table.querySelectorAll("tr.f [data-col]")];
+const rows = [...table.querySelectorAll("tr.r")];
+const shown = document.getElementById("shown");
+function apply(){
+  const want = boxes.map(b => [+b.dataset.col, b.value.trim().toLowerCase(), b.tagName === "SELECT"]);
+  let n = 0;
+  for (const r of rows) {
+    const ok = want.every(([c, v, exact]) => {
+      if (!v) return true;
+      const t = r.cells[c].dataset.v ?? r.cells[c].textContent.toLowerCase();
+      return exact ? t === v : t.includes(v);
+    });
+    r.hidden = !ok; n += ok;
+  }
+  shown.textContent = n === rows.length ? "" : `showing ${n} of ${rows.length}`;
+  const q = new URLSearchParams();
+  for (const b of boxes) if (b.value) q.set(b.name, b.value);
+  history.replaceState(null, "", q.toString() ? "?" + q : location.pathname);
+  for (const a of document.querySelectorAll("nav a[data-status]"))
+    a.classList.toggle("on", a.dataset.status === (table.querySelector("[name=status]").value));
+}
+const q = new URLSearchParams(location.search);
+for (const b of boxes) { if (q.has(b.name)) b.value = q.get(b.name); b.addEventListener("input", apply); }
+for (const a of document.querySelectorAll("nav a[data-status]")) a.addEventListener("click", e => {
+  e.preventDefault(); table.querySelector("[name=status]").value = a.dataset.status; apply();
+});
+apply();
+</script>
+"""
 
 
 CONNECT_JS = """
@@ -222,23 +260,41 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             self._send(404, "not found", "text/plain")
 
         def _status_page(self) -> str:
-            query = parse_qs(urlparse(self.path).query)
-            status = query.get("status", [None])[0]
             counts = state.counts()
-            tabs = [f'<a href="./" class="{"on" if not status else ""}">all {sum(counts.values())}</a>']
+            tabs = [f'<a href="./" data-status="">all {sum(counts.values())}</a>']
             for s in STATUS_ORDER:
                 if counts.get(s):
-                    tabs.append(f'<a href="?status={s}" class="{"on" if s == status else ""}">'
-                                f'{s.replace("_", " ")} {counts[s]}</a>')
+                    tabs.append(f'<a href="?status={s}" data-status="{s}">{s.replace("_", " ")} {counts[s]}</a>')
+            plans = state.plans(limit=5000)
+            titles = {s.name: s.title or s.name for s in sources}
             rows = []
-            for r in state.plans(status):
+            for r in plans:
                 what = _detail(r) or html.escape(r["reason"] or "")
                 if r["detail"] and r["reason"]:
                     what = f'<div class="muted">{html.escape(r["reason"])}</div>{what}'
                 rows.append(
-                    f"<tr><td>{r['txn_date']}</td><td>{html.escape(r['txn_name'] or '')}"
+                    f"<tr class='r'><td>{r['txn_date']}</td>"
+                    f"<td data-v='{html.escape(r['source'])}'>{html.escape(titles.get(r['source'], r['source']))}</td>"
+                    f"<td data-v='{html.escape((r['account'] or '').lower())}'>{html.escape(r['account'] or '')}</td>"
+                    f"<td>{html.escape(r['txn_name'] or '')}"
                     f"<div class='muted'>{html.escape(r['reference'] or '')}</div></td>"
-                    f"<td class='n'>${r['txn_amount']}</td><td>{r['status'].replace('_', ' ')}</td><td>{what}</td></tr>")
+                    f"<td class='n'>${r['txn_amount']}</td><td data-v='{r['status']}'>{r['status'].replace('_', ' ')}</td>"
+                    f"<td>{what}</td></tr>")
+
+            def choose(name: str, col: int, values: dict[str, str]) -> str:
+                options = "".join(f'<option value="{html.escape(v)}">{html.escape(label)}</option>'
+                                  for v, label in sorted(values.items(), key=lambda kv: kv[1].lower()))
+                return f'<th><select name="{name}" data-col="{col}" aria-label="{name}"><option value="">all</option>{options}</select></th>'
+
+            def search(name: str, col: int, hint: str) -> str:
+                return f'<th><input name="{name}" data-col="{col}" placeholder="{hint}" aria-label="{name}"></th>'
+
+            filters = ("<tr class='f'>" + search("date", 0, "2026-10")
+                       + choose("source", 1, {r["source"]: titles.get(r["source"], r["source"]) for r in plans})
+                       + choose("account", 2, {(r["account"] or "").lower(): r["account"] or "(none)" for r in plans})
+                       + search("name", 3, "search") + search("amount", 4, "65.19")
+                       + choose("status", 5, {r["status"]: r["status"].replace("_", " ") for r in plans})
+                       + search("what", 6, "search") + "</tr>") if plans else ""
 
             runs = state.last_runs(1)
             last = "never"
@@ -272,10 +328,11 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             body = (f"<h1>Sure Itemizer</h1><div class='muted'>{mode} · last run: {last}</div>{setup}"
                     f'<form method="post" action="run" style="margin-top:8px"><button>Run now</button></form>'
                     f"<h2>Integrations</h2>{''.join(cards)}"
-                    f"<h2>Transactions</h2><nav>{''.join(tabs)}</nav>"
-                    f"<div class='wrap'><table><tr><th>Date</th><th>Transaction</th><th class='n'>Amount</th>"
-                    f"<th>Status</th><th>What</th></tr>"
-                    f"{''.join(rows) or '<tr><td colspan=5 class=muted>Nothing yet.</td></tr>'}</table></div>")
+                    f"<h2>Transactions <span id='shown' class='muted'></span></h2><nav>{''.join(tabs)}</nav>"
+                    f"<div class='wrap'><table id='txns'><tr><th>Date</th><th>Source</th><th>Account</th>"
+                    f"<th>Transaction</th><th class='n'>Amount</th><th>Status</th><th>What</th></tr>{filters}"
+                    f"{''.join(rows) or '<tr><td colspan=7 class=muted>Nothing yet.</td></tr>'}</table></div>"
+                    f"{FILTER_JS if plans else ''}")
             return page("Sure Itemizer", body)
 
         def _connect_page(self, source: Source, flow: LoginFlow) -> str:

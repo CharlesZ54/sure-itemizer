@@ -68,6 +68,10 @@ class State:
             kids = {r[0] for r in self.db.execute("select child_id from children")}
         return done | kids
 
+    def children_ids(self) -> set[str]:
+        with self.lock:
+            return {r[0] for r in self.db.execute("select child_id from children")}
+
     def record(self, txn: SureTxn, source: str, status: str, plan: Plan | None = None,
                reason: str = "", children_ids: list[str] | None = None) -> None:
         detail = None

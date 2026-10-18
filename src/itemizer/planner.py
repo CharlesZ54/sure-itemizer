@@ -29,7 +29,12 @@ def plan(txn: SureTxn, purchase: Purchase) -> Plan:
     # charge, Sure's AI rule has usually already categorized and locked it
     # from the bare merchant name; a fresh, uncategorized row named after the
     # item is what lets the categorizer look again with real information.
-    amounts = allocate(txn.amount_cents, [line.weight_cents for line in purchase.lines])
+    if all(line.amount_cents is not None for line in purchase.lines):
+        amounts = [line.amount_cents for line in purchase.lines]
+        if sum(amounts) != txn.amount_cents:
+            return Plan(txn, purchase, "skip", "the parts don't add up to the transaction")
+    else:
+        amounts = allocate(txn.amount_cents, [line.weight_cents for line in purchase.lines])
     children = [(child_name(line.name, line.quantity), cents) for line, cents in zip(purchase.lines, amounts)]
     if any(cents == 0 for _, cents in children):
         return Plan(txn, purchase, "skip", "an item would get a $0.00 share")

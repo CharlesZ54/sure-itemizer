@@ -19,6 +19,9 @@ class Line:
     # the exact amount for sources that know it, such as a single Venmo payment.
     weight_cents: int
     quantity: int = 1
+    # The line's exact signed share, for sources that know it (a Venmo cash-out
+    # is made of payments in and out). Used as-is instead of apportioning.
+    amount_cents: int | None = None
 
 
 @dataclass

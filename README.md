@@ -55,17 +55,16 @@ The live view is also available on its own from either Connect page (*Or sign in
 
 ## Connecting Venmo
 
-Venmo transactions aren't split; their descriptions are replaced. The bank's original text is kept in the notes.
+Payments are renamed, with the bank's original text kept in the notes. Cash-outs are split into the payments behind them.
 
 - **A payment you made from your bank** (`VENMO PAYMENT`) becomes *"Venmo to Alex Doe: pizza"*. That includes requests from others that you paid.
-- **A cash-out** (`VENMO CASHOUT`) becomes *"Venmo cash-out: Sam Roe (dinner), Alex Doe (tickets)"*, listing the payments received since the previous cash-out.
-- **Payments from your Venmo balance** never reach the bank, so there's nothing to describe.
+- **A cash-out** (`VENMO CASHOUT`) is split into the payments received since the previous cash-out (*"Venmo from Sam Roe: dinner"*), less the payments you made from your Venmo balance in that time (*"Venmo to Alex Doe: pizza"*), so Sure's AI categorizes each one. If money was already in the balance, or some was left there, a *"Venmo balance from before"* or *"Left in the Venmo balance"* line makes the parts add up; an instant transfer's fee gets a line too. Like Amazon splits, this needs Sure's split API (v0.7.6). A payment counts as paid from the balance when the bank has no Venmo pull of the same amount around its date.
 
 **Step-by-step: [docs/venmo.md](docs/venmo.md)**, covering the trusted device ID (`v_id`), getting or reusing an access token, and revoking one.
 
 **Integrations → Venmo → Connect** uses Venmo's unofficial mobile API, the same one the [venmo-api](https://github.com/mmohades/Venmo) library uses. Either paste an access token you already have, or sign in with your email or phone, your password and a **trusted device ID**. Venmo refuses sign-ins from devices it doesn't know, and repeated attempts can lock the account ([mmohades/Venmo#86](https://github.com/mmohades/Venmo/issues/86)), so the form won't try without one. The ID is the `v_id` cookie of a browser you've signed in to Venmo with: venmo.com → your browser's developer tools → Application/Storage → Cookies. If Venmo then texts a code, you enter it on the page. Only the token is kept (`/data/venmo/auth.json`, mode 600); it doesn't expire until revoked in Venmo. The service only ever reads with it. **Disconnect** forgets the token but doesn't revoke it, so a token shared with another tool keeps working.
 
-Optionally, drop Venmo statement CSVs (venmo.com → Statements → Download CSV) into `/data/venmo/statements/`. They record each cash-out exactly, so cash-out descriptions become precise rather than inferred.
+Optionally, drop Venmo statement CSVs (venmo.com → Statements → Download CSV) into `/data/venmo/statements/`. They say how each payment was funded, so the bank-or-balance guess isn't needed for those months.
 
 The API is unofficial: Venmo can change it at any time, and unusual access could draw attention to the account.
 

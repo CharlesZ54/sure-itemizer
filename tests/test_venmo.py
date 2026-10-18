@@ -46,10 +46,13 @@ def test_payments_from_the_bank_are_described_with_who_and_why():
     assert p["1007"].amount_cents == 107620 and p["1007"].description == "Venmo to Lee Moe: utilities, Oct"
 
 
-def test_cash_outs_list_the_payments_they_carried():
+def test_cash_outs_split_into_the_payments_they_carried():
     p = by_id(purchases_from(parse_statement(STATEMENT)))
     assert p["1005"].amount_cents == -6519
-    assert p["1005"].description == "Venmo cash-out: Sam Roe (dinner), Jo Poe (tickets)"
+    # In: dinner and tickets; out of the balance: coffee; the rest was there before.
+    assert [(line.name, line.amount_cents) for line in p["1005"].lines] == [
+        ("Venmo from Sam Roe: dinner", -4000), ("Venmo from Jo Poe: tickets", -2519),
+        ("Venmo to Kim Loe: coffee", 500), ("Venmo balance from before", -500)]
     # Instant transfer: the bank gets the amount minus the fee.
     assert p["1006"].amount_cents == -9825 and p["1006"].description == "Venmo cash-out"
 
@@ -57,16 +60,6 @@ def test_cash_outs_list_the_payments_they_carried():
 def test_balance_payments_and_cancelled_ones_never_reach_the_bank():
     p = by_id(purchases_from(parse_statement(STATEMENT)))
     assert "1004" not in p and "1008" not in p and "1002" not in p
-
-
-def test_many_payments_are_summarised():
-    rows = parse_statement(STATEMENT)
-    extra = "\n".join(f",20{i},2026-10-05T0{i}:00:00,Payment,Complete,n{i},P{i},Pat Example,+ $1.00,,0,,0,,,"
-                      f"Venmo balance,,,,Venmo,," for i in range(1, 6))
-    more = parse_statement(STATEMENT.replace(",1006,", extra + "\n,1006,", 1))
-    cash_out = by_id(purchases_from(more))["1006"]
-    assert cash_out.description == "Venmo cash-out: P1 (n1), P2 (n2), P3 (n3) +2 more"
-    assert len(rows) == 8
 
 
 def test_rename_plan_keeps_the_bank_text_in_the_notes():
@@ -90,7 +83,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer  # noqa: E40
 from itemizer.models import Purchase  # noqa: E402,F401
 from itemizer.sources import venmo_api  # noqa: E402
 from itemizer.sources.base import LoginRequired  # noqa: E402
-from itemizer.sources.venmo import VenmoSource, describe_cash_outs, payments_from_stories  # noqa: E402
+from itemizer.sources.venmo import VenmoSource, purchases_from, rows_from_stories  # noqa: E402
 
 ME = {"id": "100", "username": "pat-example", "display_name": "Pat Example"}
 ALEX = {"id": "200", "display_name": "Alex Doe"}
@@ -113,7 +106,7 @@ STORIES = [
 
 
 def test_stories_become_rows_with_the_right_direction():
-    rows = {r.id: r for r in payments_from_stories(STORIES, "100")}
+    rows = {r.id: r for r in rows_from_stories(STORIES, "100")}
     assert rows["1"].cents == -3809 and rows["1"].counterparty == "Alex Doe"
     assert rows["2"].cents == 4000 and rows["2"].counterparty == "Sam Roe"
     assert rows["3"].cents == 2519 and rows["3"].counterparty == "Alex Doe"
@@ -121,15 +114,65 @@ def test_stories_become_rows_with_the_right_direction():
     assert "5" not in rows
 
 
-def test_cash_outs_are_described_from_what_came_in_before_them():
-    received = [r for r in payments_from_stories(STORIES, "100") if r.cents > 0]
-    txn = lambda tid, d, cents: SureTxn(tid, d, cents, "Transfer from Venmo - VENMO CASHOUT", None, "a", "Chk", None)
-    outs = describe_cash_outs([txn("c1", date(2026, 10, 2), -4000), txn("c2", date(2026, 10, 5), -2519),
-                               txn("not-a-cashout", date(2026, 10, 5), 500)], received, since=date(2026, 9, 20))
-    assert [(p.external_id, p.amount_cents, p.description) for p in outs] == [
-        ("cash-out:c1", -4000, "Venmo cash-out: Sam Roe (dinner)"),
-        ("cash-out:c2", -2519, "Venmo cash-out: Alex Doe (tickets)"),
+def transfer(tid, cents, when, fee=0):
+    return {"id": f"t{tid}", "date_created": when, "type": "transfer", "payment": None,
+            "transfer": {"id": int(tid), "amount_cents": cents, "amount_fee_cents": fee, "date_requested": when,
+                         "status": "issued", "destination": {"type": "bank", "name": "Example Bank"}}}
+
+
+CASH_OUTS = [transfer("901", 4000, "2026-10-02T18:00:00"), transfer("902", 2519, "2026-10-05T18:00:00")]
+
+
+def parts(p):
+    return [(line.name, line.amount_cents) for line in p.lines]
+
+
+def test_cash_outs_split_into_what_came_in_since_the_previous_one():
+    rows = rows_from_stories(STORIES + CASH_OUTS, "100")
+    outs = {p.external_id: p for p in purchases_from(rows) if p.amount_cents < 0}
+    assert outs["901"].amount_cents == -4000 and parts(outs["901"]) == [("Venmo from Sam Roe: dinner", -4000)]
+    # Not Sam again: he was in the first.
+    assert outs["902"].amount_cents == -2519 and parts(outs["902"]) == [("Venmo from Alex Doe: tickets", -2519)]
+    assert outs["901"].description is None
+
+
+def test_balance_payments_and_leftovers_are_parts_of_the_cash_out():
+    stories = [
+        story("1", "pay", SAM, ME, 100.0, "dinner", "2026-10-01T12:00:00"),
+        story("2", "pay", ME, ALEX, 30.0, "from the balance", "2026-10-02T12:00:00"),
+        story("3", "pay", ME, ALEX, 12.0, "from the bank", "2026-10-02T13:00:00"),
+        transfer("904", 6000, "2026-10-03T12:00:00"),
     ]
+    by_bank = lambda r: r.id == "3"  # noqa: E731
+    out = {p.external_id: p for p in purchases_from(rows_from_stories(stories, "100"), bank_paid=by_bank)}
+    assert out["3"].description == "Venmo to Alex Doe: from the bank"
+    assert parts(out["904"]) == [("Venmo from Sam Roe: dinner", -10000), ("Venmo to Alex Doe: from the balance", 3000),
+                                 ("Left in the Venmo balance", 1000)]
+
+
+def test_an_instant_cash_out_arrives_minus_its_fee():
+    stories = [story("1", "pay", SAM, ME, 100.0, "dinner", "2026-10-01T12:00:00"),
+               transfer("903", 10000, "2026-10-09T09:00:00", fee=175)]
+    (p,) = purchases_from(rows_from_stories(stories, "100"))
+    assert p.amount_cents == -9825
+    assert parts(p) == [("Venmo from Sam Roe: dinner", -10000), ("Venmo instant transfer fee", 175)]
+
+
+def test_a_cash_out_with_nothing_behind_it_is_just_named():
+    (p,) = purchases_from(rows_from_stories([transfer("905", 500, "2026-10-09T09:00:00")], "100"))
+    assert p.description == "Venmo cash-out" and not p.lines
+
+
+def test_the_cash_out_split_is_planned_with_exact_amounts():
+    from itemizer.planner import plan
+    stories = [story("1", "pay", SAM, ME, 100.0, "dinner", "2026-10-01T12:00:00"),
+               story("2", "pay", ME, ALEX, 35.0, "lunch", "2026-10-02T12:00:00"),
+               transfer("906", 6500, "2026-10-03T12:00:00")]
+    (p,) = purchases_from(rows_from_stories(stories, "100"), bank_paid=lambda r: False)
+    t = SureTxn("c1", date(2026, 10, 4), -6500, "Transfer from Venmo - VENMO CASHOUT", None, "a", "Chk", None)
+    result = plan(t, p)
+    assert result.action == "split"
+    assert result.children == [("Venmo from Sam Roe: dinner", -10000), ("Venmo to Alex Doe: lunch", 3500)]
 
 
 class FakeVenmo:
@@ -174,7 +217,7 @@ class FakeVenmo:
                 if self.path.startswith("/v1/account"):
                     return self._json(200, {"data": {"user": ME}})
                 if self.path.startswith("/v1/stories/target-or-actor/100"):
-                    return self._json(200, {"data": [] if "before_id" in self.path else STORIES})
+                    return self._json(200, {"data": [] if "before_id" in self.path else STORIES + CASH_OUTS})
                 self._json(404, {})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), H)
@@ -233,11 +276,13 @@ def test_pasting_a_token_works_and_bad_ones_are_refused(venmo):
 def test_fetch_describes_payments_and_cash_outs(venmo):
     _, source = venmo
     source.login({"token": "tok-123"}, None)
-    cash_out = SureTxn("c1", date(2026, 10, 4), -6519, "Transfer from Venmo - VENMO CASHOUT", None, "a", "Chk", None)
-    got = {p.external_id: p for p in source.fetch(date(2026, 9, 20), txns=[cash_out])}
+    pull = lambda tid, d, cents: SureTxn(tid, d, cents, "VENMO PAYMENT", None, "a", "Chk", None)  # noqa: E731
+    bank = [pull("b1", date(2026, 10, 2), 3809), pull("b4", date(2026, 10, 8), 7620)]
+    got = {p.external_id: p for p in source.fetch(date(2026, 9, 20), txns=bank)}
     assert got["1"].amount_cents == 3809 and got["1"].description == "Venmo to Alex Doe: pizza"
     assert got["4"].amount_cents == 7620 and got["4"].description == "Venmo to Sam Roe: utilities"
-    assert got["cash-out:c1"].description == "Venmo cash-out: Sam Roe (dinner), Alex Doe (tickets)"
+    assert got["901"].amount_cents == -4000 and parts(got["901"]) == [("Venmo from Sam Roe: dinner", -4000)]
+    assert parts(got["902"]) == [("Venmo from Alex Doe: tickets", -2519)]
     assert "2" not in got and "3" not in got  # money in only shows up via a cash-out
 
 
@@ -246,7 +291,7 @@ def test_a_rejected_token_means_sign_in_again(venmo):
     source.login({"token": "tok-123"}, None)
     fake.token = "revoked-now"
     with pytest.raises(LoginRequired, match="rejected the token"):
-        source.fetch(date(2026, 9, 20), txns=[])
+        source.fetch(date(2026, 9, 20))
 
 
 def test_no_password_sign_in_without_a_trusted_device(venmo):
@@ -274,3 +319,36 @@ def test_connect_page_links_the_venmo_guide(tmp_path):
     assert 'href="https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/venmo.md"' in page
     assert 'name="device_id"' in page and 'name="token"' in page
     server.shutdown()
+
+
+def test_a_cash_out_just_inside_the_lookback_still_names_earlier_payments(venmo):
+    _, source = venmo
+    source.login({"token": "tok-123"}, None)
+    got = {p.external_id: p for p in source.fetch(date(2026, 10, 4))}
+    assert {"902"} <= set(got) and "901" not in got
+    assert parts(got["902"]) == [("Venmo from Alex Doe: tickets", -2519)]  # paid 10-03, before the lookback
+
+
+def test_transaction_list_shows_the_source_and_filters_every_column(tmp_path):
+    import urllib.request
+
+    from itemizer.config import Config
+    from itemizer.models import Plan
+    from itemizer.notify import Notifier
+    from itemizer.runner import Runner
+    from itemizer.state import State
+    from itemizer.web import serve
+
+    source = VenmoSource(tmp_path / "venmo")
+    state = State(tmp_path / "s.db")
+    t = SureTxn("t1", date(2026, 10, 2), 3066, "VENMO PAYMENT", None, "a", "Checking", None)
+    state.record(t, "venmo", "planned", Plan(t, None, "rename", name="Venmo to Alex Doe: pizza"), reason="dry run")
+    cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30, run_times=("07:30",),
+                 run_on_start=False, web_port=0, data_dir=tmp_path, sources=("venmo",))
+    server = serve(0, state, Runner(cfg, None, [source], state), Notifier(None, None, state), [source], True)
+    page = urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/").read().decode()
+    server.shutdown()
+    assert "<th>Source</th>" in page and "<td data-v='venmo'>Venmo</td>" in page
+    for name in ("date", "source", "account", "name", "amount", "status", "what"):
+        assert f'name="{name}"' in page
+    assert '<option value="venmo">Venmo</option>' in page and '<option value="checking">Checking</option>' in page

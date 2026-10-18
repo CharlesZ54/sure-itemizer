@@ -1,15 +1,15 @@
 """Venmo: give the bank's VENMO lines a real description.
 
-Nothing is split. A payment you made from your bank becomes
-"Venmo to Alex Smith: pizza"; a cash-out to your bank becomes
-"Venmo cash-out: Alex Smith (dinner), Sam Lee (tickets)", listing the payments
-received since the previous cash-out. Payments made from your Venmo balance
-never reach the bank, so there's nothing to describe for them.
+A payment you made from your bank is renamed "Venmo to Alex Smith: pizza".
+A cash-out to your bank is split into what it's made of: the payments received
+since the previous cash-out ("Venmo from Sam Lee: dinner"), less the payments
+made from the Venmo balance in that time ("Venmo to Alex Smith: pizza"). Any
+difference (money left in, or taken from, the balance) gets a line of its own,
+so the parts always add up to the cash-out.
 
 Data comes from Venmo's (unofficial) mobile API with a token from signing in
 on the Connect page (password + texted code) or pasted there. Venmo's own
-statement CSVs dropped into /data/venmo/statements/ are read too, and are the
-more precise source for cash-outs (they record each transfer).
+statement CSVs dropped into /data/venmo/statements/ are read too.
 """
 from __future__ import annotations
 
@@ -25,14 +25,14 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from ..config import Config
-from ..models import Purchase
+from ..models import Line, Purchase
 from ..money import to_cents
 from .base import LoginRequired, Source
 from .venmo_api import VenmoAuthError, VenmoClient, VenmoError
 
 log = logging.getLogger(__name__)
 
-MAX_NAMED = 3  # cash-out descriptions name this many payments, then "+N more"
+LEAD_DAYS = 31  # look back this much further for payments behind the first cash-out
 
 
 @dataclass(frozen=True)
@@ -119,22 +119,32 @@ def parse_statement(text: str) -> list[Row]:
     return rows
 
 
-def _label(row: Row) -> str:
+def _line(row: Row) -> Line:
+    """A cash-out's part: money in is negative, as in Sure."""
     who = row.counterparty or "someone"
-    return f"{who} ({row.note})" if row.note else who
+    name = f"Venmo {'to' if row.cents < 0 else 'from'} {who}" + (f": {row.note}" if row.note else "")
+    return Line(name, abs(row.cents), amount_cents=-row.cents)
 
 
-def purchases_from(rows: list[Row]) -> list[Purchase]:
-    """What the bank saw, described. Signs follow Sure: positive = money left the bank."""
+def purchases_from(rows: list[Row], bank_paid=None) -> list[Purchase]:
+    """What the bank saw. Signs follow Sure: positive = money left the bank.
+
+    `bank_paid(row)` tells whether an outgoing payment was pulled from the
+    bank, for rows (the API's) that don't say how they were funded.
+    """
     rows = sorted((r for r in rows if r.status.lower() in ("complete", "completed", "issued", "")),
                   key=lambda r: r.when)
     out: list[Purchase] = []
-    received: list[Row] = []  # payments into the balance since the last cash-out
+    parts: list[Row] = []  # payments in, and out of the balance, since the last cash-out
     for r in rows:
         if r.is_payment and r.cents > 0:
-            received.append(r)
+            parts.append(r)
             continue
-        if r.is_payment and r.cents < 0 and not r.from_balance:
+        if r.is_payment and r.cents < 0:
+            from_balance = r.from_balance if r.funding or not bank_paid else not bank_paid(r)
+            if from_balance:
+                parts.append(r)
+                continue
             who = r.counterparty or "someone"
             desc = f"Venmo to {who}: {r.note}" if r.note else f"Venmo to {who}"
             out.append(Purchase(source="venmo", external_id=r.id, date=r.when.date(), amount_cents=-r.cents,
@@ -143,23 +153,24 @@ def purchases_from(rows: list[Row]) -> list[Purchase]:
         if r.is_transfer and r.cents < 0:
             # Cash-out to the bank; an instant transfer arrives minus its fee.
             net = abs(r.cents) - r.fee_cents
-            named = [_label(p) for p in received]
-            desc = "Venmo cash-out"
-            if named:
-                extra = f" +{len(named) - MAX_NAMED} more" if len(named) > MAX_NAMED else ""
-                desc += ": " + ", ".join(named[:MAX_NAMED]) + extra
-            out.append(Purchase(source="venmo", external_id=r.id, date=r.when.date(), amount_cents=-net,
-                                reference=r.id, description=desc))
-            received = []
+            p = Purchase(source="venmo", external_id=r.id, date=r.when.date(), amount_cents=-net, reference=r.id)
+            if parts:
+                p.lines = [_line(x) for x in parts]
+                if r.fee_cents:
+                    p.lines.append(Line("Venmo instant transfer fee", r.fee_cents, amount_cents=r.fee_cents))
+                rest = -net - sum(line.amount_cents for line in p.lines)
+                if rest:
+                    name = "Venmo balance from before" if rest < 0 else "Left in the Venmo balance"
+                    p.lines.append(Line(name, abs(rest), amount_cents=rest))
+            else:
+                p.description = "Venmo cash-out"
+            out.append(p)
+            parts = []
             continue
         if r.is_transfer and r.cents > 0:
             out.append(Purchase(source="venmo", external_id=r.id, date=r.when.date(), amount_cents=r.cents,
                                 reference=r.id, description="Venmo: added to balance"))
     return out
-
-
-# Bank lines that are money coming back from Venmo.
-CASH_OUT = re.compile(r"cash ?out|transfer from venmo", re.I)
 
 
 def _name(user: dict | None) -> str:
@@ -168,10 +179,31 @@ def _name(user: dict | None) -> str:
             or user.get("username") or "someone")
 
 
-def payments_from_stories(stories: list[dict], my_id: str) -> list[Row]:
-    """Venmo API stories as statement-like rows (cents negative = left your Venmo)."""
+def _stamp(text: str | None) -> datetime | None:
+    try:
+        return datetime.fromisoformat((text or "").replace("Z", ""))
+    except ValueError:
+        return None
+
+
+def rows_from_stories(stories: list[dict], my_id: str) -> list[Row]:
+    """Venmo API stories (payments and transfers) as statement-like rows.
+
+    Cents are negative when money left your Venmo balance, as in a statement.
+    """
     rows = []
     for story in stories:
+        t = story.get("transfer") or {}
+        if t:
+            # Cash-outs to a bank or card; money added to Venmo isn't a transfer story.
+            stamp = _stamp(t.get("date_requested") or story.get("date_created"))
+            if stamp and (t.get("status") or "").lower() in ("issued", "complete", "completed"):
+                cents = t.get("amount_cents") or to_cents(t.get("amount") or 0)
+                rows.append(Row(id=str(t.get("id") or story.get("id")), when=stamp, type="Standard Transfer",
+                                status="Issued", note="", sender="", recipient="", cents=-cents,
+                                fee_cents=t.get("amount_fee_cents") or 0, funding="",
+                                destination=(t.get("destination") or {}).get("name") or ""))
+            continue
         p = story.get("payment") or {}
         if not p or (p.get("status") or "").lower() not in ("settled", "complete", "completed"):
             continue
@@ -183,38 +215,14 @@ def payments_from_stories(stories: list[dict], my_id: str) -> list[Row]:
         paid_out = i_acted if action == "pay" else not i_acted
         other = target if i_acted else actor
         cents = to_cents(p.get("amount") or 0)
-        when = (p.get("date_completed") or story.get("date_created") or "").replace("Z", "")
-        try:
-            stamp = datetime.fromisoformat(when)
-        except ValueError:
+        stamp = _stamp(p.get("date_completed") or story.get("date_created"))
+        if not stamp:
             continue
         rows.append(Row(id=str(p.get("id") or story.get("id")), when=stamp, type="Payment", status="Complete",
                         note=" ".join((p.get("note") or "").split()), sender="" if paid_out else _name(other),
                         recipient=_name(other) if paid_out else "", cents=-cents if paid_out else cents,
                         fee_cents=0, funding="", destination=""))
     return rows
-
-
-def describe_cash_outs(txns: list, received: list[Row], since: date) -> list[Purchase]:
-    """Describe the bank's Venmo cash-outs with the payments received before each one.
-
-    The API doesn't list transfers, so each cash-out is described from what
-    came in after the previous cash-out (or the lookback start) up to its date.
-    """
-    outs = sorted((t for t in txns if t.amount_cents < 0 and CASH_OUT.search(t.name)), key=lambda t: t.date)
-    received = sorted(received, key=lambda r: r.when)
-    purchases, start = [], since
-    for t in outs:
-        window = [r for r in received if start <= r.when.date() <= t.date]
-        named = [_label(r) for r in window]
-        desc = "Venmo cash-out"
-        if named:
-            extra = f" +{len(named) - MAX_NAMED} more" if len(named) > MAX_NAMED else ""
-            desc += ": " + ", ".join(named[:MAX_NAMED]) + extra
-        purchases.append(Purchase(source="venmo", external_id=f"cash-out:{t.id}", date=t.date,
-                                  amount_cents=t.amount_cents, description=desc))
-        start = t.date + timedelta(days=1)
-    return purchases
 
 
 class VenmoSource(Source):
@@ -334,18 +342,29 @@ class VenmoSource(Source):
             raise LoginRequired(str(e)) from e
         except VenmoError as e:
             raise RuntimeError(f"venmo: {e}") from e
-        return payments_from_stories(stories, me["id"])
+        return rows_from_stories(stories, me["id"])
+
+    def _bank_paid(self, txns: list):
+        """Whether the bank shows a pull for an outgoing payment (else the balance paid it)."""
+        before, after = self.date_window
+        pulls = [t for t in txns if t.amount_cents > 0]
+
+        def paid(row: Row) -> bool:
+            day = row.when.date()
+            return any(t.amount_cents == -row.cents and day - timedelta(days=before) <= t.date
+                       <= day + timedelta(days=after) for t in pulls)
+        return paid
 
     def fetch(self, since: date, amounts: set[int] | None = None, txns=None) -> list[Purchase]:
+        # Read further back than asked, so the first cash-out in range still
+        # knows the payments that came in before it.
+        earlier = since - timedelta(days=LEAD_DAYS)
         statement = self._saved_statements()
-        api = self._api_rows(since) if self.connected() or not statement else []
+        api = self._api_rows(earlier) if self.connected() or not statement else []
+        if any(r.is_transfer for r in statement):
+            # The statement has the cash-outs already, under its own ids.
+            api = [r for r in api if not r.is_transfer]
         purchases = {p.external_id: p for p in purchases_from(statement)}
-        # Statement CSVs record cash-outs exactly; without them, describe the
-        # bank's cash-outs from the payments received before each.
-        if not any(r.is_transfer for r in statement):
-            received = [r for r in api if r.cents > 0]
-            for p in describe_cash_outs(txns or [], received, since):
-                purchases[p.external_id] = p
-        for p in purchases_from([r for r in api if r.cents < 0]):
+        for p in purchases_from(api, bank_paid=self._bank_paid(txns or [])):
             purchases.setdefault(p.external_id, p)
         return [p for p in purchases.values() if p.date >= since]

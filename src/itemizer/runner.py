@@ -66,14 +66,16 @@ class Runner:
     def _run_source(self, source: Source, tally: Counter) -> None:
         since = date.today() - timedelta(days=self.cfg.lookback_days)
         ignored = self.state.ignored_ids()
-        txns = [t for t in self.sure.transactions(since, source.sure_search)
-                if source.claims(t) and t.id not in ignored]
+        children = self.state.children_ids()
+        claimed = [t for t in self.sure.transactions(since, source.sure_search)
+                   if source.claims(t) and t.id not in children]
+        txns = [t for t in claimed if t.id not in ignored]
         log.info("%s: %d Sure transactions to look at since %s", source.name, len(txns), since)
         if not txns:
             return
 
         purchases = source.fetch(since - timedelta(days=source.date_window[1]),
-                                 amounts={abs(t.amount_cents) for t in txns}, txns=txns)
+                                 amounts={abs(t.amount_cents) for t in txns}, txns=claimed)
         pairs = match(txns, purchases, source.date_window)
         matched = {t.id for t, _ in pairs}
 

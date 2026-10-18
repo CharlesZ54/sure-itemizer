@@ -68,9 +68,9 @@ class Source(ABC):
         """Return the merchant's charges on or after `since`.
 
         `amounts` (absolute cents) are the Sure transactions still waiting for
-        a match, and `txns` the transactions themselves. A source may use them
-        to skip expensive lookups, or (when the merchant has no record of a
-        bank movement, like a Venmo cash-out) to describe them. Raises
+        a match, so a source can skip expensive lookups. `txns` are all of the
+        source's Sure transactions in the period, finished ones included (the
+        bank's side of things, e.g. which Venmo payments it paid for). Raises
         LoginRequired when the user has to sign in.
         """
 
