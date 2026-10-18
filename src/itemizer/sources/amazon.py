@@ -215,19 +215,16 @@ class AmazonSource(Source):
     date_window = (2, 5)
     login_fields = [("email", "Amazon email", "email"), ("password", "Amazon password", "password")]
 
-    def __init__(self, data_dir: Path, card_last4: str | None = None,
-                 account_filter: str | None = None, domain: str | None = None) -> None:
-        super().__init__(account_filter)
+    def __init__(self, data_dir: Path, domain: str | None = None) -> None:
+        super().__init__()
         self.data_dir = Path(data_dir)
-        self.card_last4 = card_last4
         self.domain = domain
         self._session = None
         self._lock = threading.Lock()
 
     @classmethod
     def from_config(cls, cfg: Config) -> "AmazonSource":
-        return cls(data_dir=cfg.data_dir / "amazon", card_last4=cfg.amazon_card_last4,
-                   account_filter=cfg.amazon_sure_account, domain=cfg.amazon_domain)
+        return cls(data_dir=cfg.data_dir / "amazon", domain=cfg.amazon_domain)
 
     @property
     def cookie_path(self) -> Path:
@@ -347,11 +344,6 @@ class AmazonSource(Source):
 
     # Fetching -----------------------------------------------------------
 
-    def _card_ok(self, payment_method: str | None) -> bool:
-        if not self.card_last4:
-            return True
-        return bool(payment_method) and self.card_last4 in payment_method
-
     def fetch(self, since: date, amounts: set[int] | None = None, txns=None) -> list[Purchase]:
         from amazonorders.exception import AmazonOrdersAuthError
 
@@ -373,8 +365,6 @@ class AmazonSource(Source):
 
         by_order: dict[str | None, list[ChargeView]] = defaultdict(list)
         for t in raw:
-            if not self._card_ok(t.payment_method):
-                continue
             by_order[t.order_number].append(ChargeView(
                 date=t.completed_date,
                 amount_cents=abs(to_cents(t.grand_total)),

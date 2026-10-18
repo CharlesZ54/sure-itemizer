@@ -92,8 +92,6 @@ You'll hear about it when a merchant needs you to sign in again, and when a run 
 | `WEB_PORT` | `8686` | Status page |
 | `APPRISE_URL` | — | Where to send notifications (Apprise URLs, comma-separated) |
 | `PUBLIC_URL` | — | How you reach the status page; linked from notifications |
-| `AMZN_CARD_LAST4` | — | Only use Amazon charges paid with this card |
-| `AMZN_SURE_ACCOUNT` | — | Only look at this Sure account (id or part of its name) |
 | `AMZN_DOMAIN` | `amazon.com` | Other Amazon marketplaces are untested |
 | `TARGET_SURE_ACCOUNT` | — | Only look at this Sure account for Target |
 | `VENMO_SURE_ACCOUNT` | — | Only look at this Sure account for Venmo |

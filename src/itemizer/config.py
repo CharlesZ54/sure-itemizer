@@ -33,8 +33,6 @@ class Config:
 
     # Merchant credentials are deliberately not configuration: they are typed
     # into the web UI at login time and never stored.
-    amazon_card_last4: str | None = None
-    amazon_sure_account: str | None = None
     amazon_domain: str | None = None
 
     def source_setting(self, prefix: str, key: str, default: str | None = None) -> str | None:
@@ -59,7 +57,5 @@ class Config:
             sources=tuple(s.strip().lower() for s in _env("SOURCES", "amazon").split(",") if s.strip()),
             apprise_url=_env("APPRISE_URL"),
             public_url=(_env("PUBLIC_URL") or "").rstrip("/") or None,
-            amazon_card_last4=_env("AMZN_CARD_LAST4"),
-            amazon_sure_account=_env("AMZN_SURE_ACCOUNT"),
             amazon_domain=_env("AMZN_DOMAIN"),
         )
