@@ -201,7 +201,7 @@ def venmo(monkeypatch, tmp_path):
 def test_sign_in_with_texted_code_saves_only_the_token(venmo):
     fake, source = venmo
     io = CodeIO("123 456")
-    source.login({"username": "me@example.com", "password": "pw", "token": ""}, io)
+    source.login({"username": "me@example.com", "password": "pw", "device_id": "TRUSTED-V-ID", "token": ""}, io)
     assert io.prompts == ["Enter the code Venmo texted you"]
     paths = [c[1].split("?")[0] for c in fake.calls]
     assert paths == ["/v1/oauth/access_token", "/v1/account/two-factor/token", "/v1/oauth/access_token",
@@ -209,15 +209,15 @@ def test_sign_in_with_texted_code_saves_only_the_token(venmo):
     saved = source.auth_path.read_text()
     assert _json.loads(saved)["token"] == "tok-123" and "pw" not in saved
     assert oct(os.stat(source.auth_path).st_mode & 0o777) == "0o600"
-    # The same device id is used throughout, so Venmo can trust it.
-    devices = {c[3].get("device-id") for c in fake.calls}
-    assert len(devices) == 1 and _json.loads(saved)["device_id"] in devices
+    # The trusted device id is used throughout, and kept for later.
+    assert {c[3].get("device-id") for c in fake.calls} == {"TRUSTED-V-ID"}
+    assert _json.loads(saved)["device_id"] == "TRUSTED-V-ID"
 
 
 def test_wrong_password_is_reported(venmo):
     _, source = venmo
     with pytest.raises(venmo_api.VenmoAuthError, match="password is incorrect"):
-        source.login({"username": "me@example.com", "password": "nope", "token": ""}, CodeIO("1"))
+        source.login({"username": "me@example.com", "password": "nope", "device_id": "V", "token": ""}, CodeIO("1"))
     assert not source.connected()
 
 
@@ -247,3 +247,10 @@ def test_a_rejected_token_means_sign_in_again(venmo):
     fake.token = "revoked-now"
     with pytest.raises(LoginRequired, match="rejected the token"):
         source.fetch(date(2026, 9, 20), txns=[])
+
+
+def test_no_password_sign_in_without_a_trusted_device(venmo):
+    fake, source = venmo
+    with pytest.raises(ValueError, match="device it already trusts"):
+        source.login({"username": "me@example.com", "password": "pw", "device_id": "", "token": ""}, CodeIO("1"))
+    assert fake.calls == []  # never even tried: failed attempts can lock the account

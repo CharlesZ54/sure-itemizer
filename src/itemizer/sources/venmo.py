@@ -227,7 +227,10 @@ class VenmoSource(Source):
     login_fields = [
         ("username", "Venmo email or phone", "text", True),
         ("password", "Venmo password", "password", True),
-        ("token", "…or paste a Venmo access token instead", "password", True),
+        # Venmo refuses (and counts against you) sign-ins from devices it doesn't
+        # know: github.com/mmohades/Venmo/issues/86. A browser's v_id cookie is one.
+        ("device_id", "Trusted device ID: the v_id cookie from a browser signed in to Venmo", "text", True),
+        ("token", "…or instead, paste a Venmo access token", "password", True),
     ]
 
     def __init__(self, data_dir: Path, account_filter: str | None = None) -> None:
@@ -269,15 +272,20 @@ class VenmoSource(Source):
     def login(self, fields: dict[str, str], io) -> None:
         token = (fields.get("token") or "").strip()
         username, password = (fields.get("username") or "").strip(), fields.get("password") or ""
+        trusted = (fields.get("device_id") or "").strip()
         with self._lock:
-            # Reuse this install's device id, so a trusted device stays trusted.
-            device = None
-            if self.auth_path.exists():
+            device = trusted or None
+            if not device and self.auth_path.exists():
                 device = json.loads(self.auth_path.read_text()).get("device_id")
             client = VenmoClient(device_id=device)
             if token:
                 client.set_token(token)
             elif username and password:
+                if not device:
+                    # A made-up device id gets "Unable to complete your request",
+                    # and repeated tries can lock the account. Don't try.
+                    raise ValueError("Venmo only accepts sign-ins from a device it already trusts. Enter the "
+                                     "v_id cookie of a browser you've signed in to Venmo with (or paste a token).")
                 secret = client.start_login(username, password)
                 if secret:
                     client.send_code(secret)
