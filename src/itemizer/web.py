@@ -292,7 +292,7 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             filters = ("<tr class='f'>" + search("date", 0, "2026-10")
                        + choose("source", 1, {r["source"]: titles.get(r["source"], r["source"]) for r in plans})
                        + choose("account", 2, {(r["account"] or "").lower(): r["account"] or "(none)" for r in plans})
-                       + search("name", 3, "search") + search("amount", 4, "65.19")
+                       + search("name", 3, "search") + search("amount", 4, "12.34")
                        + choose("status", 5, {r["status"]: r["status"].replace("_", " ") for r in plans})
                        + search("what", 6, "search") + "</tr>") if plans else ""
 

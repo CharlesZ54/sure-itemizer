@@ -189,8 +189,8 @@ def test_no_candidates_means_no_merchant_login(env):
 
 def test_renames_go_to_sure_as_name_and_notes(env):
     fake = FakeSure()
-    fake.add("v1", 2, 3809, "Transfer to Venmo - VENMO PAYMENT")
-    purchase = Purchase(source="amazon", external_id="x", date=TODAY - timedelta(days=3), amount_cents=3809,
+    fake.add("v1", 2, 2150, "Transfer to Venmo - VENMO PAYMENT")
+    purchase = Purchase(source="amazon", external_id="x", date=TODAY - timedelta(days=3), amount_cents=2150,
                         description="Venmo to Alex Doe: pizza")
     runner, _, state = env(fake, [purchase])
     fake.txns["v1"]["name"] = "Amazon - VENMO PAYMENT"  # FakeSource claims names matching "amazon"

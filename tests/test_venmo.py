@@ -11,13 +11,13 @@ STATEMENT = """Account Statement - (@Pat-Example) ,,,,,,,,,,,,,,,,,,,,,
 Account Activity,,,,,,,,,,,,,,,,,,,,,
 ,ID,Datetime,Type,Status,Note,From,To,Amount (total),Amount (tip),Amount (tax),Amount (fee),Tax Rate,Tax Exempt,Funding Source,Destination,Beginning Balance,Ending Balance,Statement Period Venmo Fees,Terminal Location,Year to Date Venmo Fees,Disclaimer
 ,,,,,,,,,,,,,,,,$10.00,,,,,
-,1001,2026-10-01T12:00:00,Payment,Complete,pizza \U0001F355,Pat Example,Alex Doe,- $38.09,,0,,0,,Bank Account *0000,,,,,Venmo,,
+,1001,2026-10-01T12:00:00,Payment,Complete,pizza \U0001F355,Pat Example,Alex Doe,- $21.50,,0,,0,,Bank Account *0000,,,,,Venmo,,
 ,1002,2026-10-02T12:00:00,Payment,Complete,dinner,Sam Roe,Pat Example,+ $40.00,,0,,0,,,Venmo balance,,,,Venmo,,
-,1003,2026-10-03T09:00:00,Charge,Complete,tickets,Pat Example,Jo Poe,+ $25.19,,0,,0,,,Venmo balance,,,,Venmo,,
+,1003,2026-10-03T09:00:00,Charge,Complete,tickets,Pat Example,Jo Poe,+ $25.00,,0,,0,,,Venmo balance,,,,Venmo,,
 ,1004,2026-10-03T12:00:00,Payment,Complete,coffee,Pat Example,Kim Loe,- $5.00,,0,,0,,Venmo balance,,,,,Venmo,,
-,1005,2026-10-04T08:00:00,Standard Transfer,Issued,,,,- $65.19,,0,,0,,,Bank Account *0000,,,,Venmo,,
+,1005,2026-10-04T08:00:00,Standard Transfer,Issued,,,,- $65.00,,0,,0,,,Bank Account *0000,,,,Venmo,,
 ,1006,2026-10-06T08:00:00,Instant Transfer,Issued,,,,- $100.00,,0,- $1.75,0,,,Bank Account *0000,,,,Venmo,,
-,1007,2026-10-07T08:00:00,Charge,Complete,"utilities, Oct",Lee Moe,Pat Example,"- $1,076.20",,0,,0,,Bank Account *0000,,,,,Venmo,,
+,1007,2026-10-07T08:00:00,Charge,Complete,"utilities, Oct",Lee Moe,Pat Example,"- $1,088.00",,0,,0,,Bank Account *0000,,,,,Venmo,,
 ,1008,2026-10-08T08:00:00,Payment,Cancelled,oops,Pat Example,Kim Loe,- $9.00,,0,,0,,Bank Account *0000,,,,,Venmo,,
 ,,,,,,,,,,,,,,,,,$0.00,,,,
 """
@@ -30,7 +30,7 @@ def by_id(purchases):
 def test_parses_rows_and_skips_balance_lines():
     rows = parse_statement(STATEMENT)
     assert [r.id for r in rows] == ["1001", "1002", "1003", "1004", "1005", "1006", "1007", "1008"]
-    assert rows[0].cents == -3809 and rows[6].cents == -107620 and rows[5].fee_cents == 175
+    assert rows[0].cents == -2150 and rows[6].cents == -108800 and rows[5].fee_cents == 175
     assert rows[6].note == "utilities, Oct"
 
 
@@ -41,17 +41,17 @@ def test_rejects_files_that_arent_statements():
 
 def test_payments_from_the_bank_are_described_with_who_and_why():
     p = by_id(purchases_from(parse_statement(STATEMENT)))
-    assert p["1001"].amount_cents == 3809 and p["1001"].description == "Venmo to Alex Doe: pizza \U0001F355"
+    assert p["1001"].amount_cents == 2150 and p["1001"].description == "Venmo to Alex Doe: pizza \U0001F355"
     # A request someone else sent you, which you paid: the other side is its sender.
-    assert p["1007"].amount_cents == 107620 and p["1007"].description == "Venmo to Lee Moe: utilities, Oct"
+    assert p["1007"].amount_cents == 108800 and p["1007"].description == "Venmo to Lee Moe: utilities, Oct"
 
 
 def test_cash_outs_split_into_the_payments_they_carried():
     p = by_id(purchases_from(parse_statement(STATEMENT)))
-    assert p["1005"].amount_cents == -6519
+    assert p["1005"].amount_cents == -6500
     # In: dinner and tickets; out of the balance: coffee; the rest was there before.
     assert [(line.name, line.amount_cents) for line in p["1005"].lines] == [
-        ("Venmo from Sam Roe: dinner", -4000), ("Venmo from Jo Poe: tickets", -2519),
+        ("Venmo from Sam Roe: dinner", -4000), ("Venmo from Jo Poe: tickets", -2500),
         ("Venmo to Kim Loe: coffee", 500), ("Venmo balance from before", -500)]
     # Instant transfer: the bank gets the amount minus the fee.
     assert p["1006"].amount_cents == -9825 and p["1006"].description == "Venmo cash-out"
@@ -63,13 +63,13 @@ def test_balance_payments_and_cancelled_ones_never_reach_the_bank():
 
 
 def test_rename_plan_keeps_the_bank_text_in_the_notes():
-    txn = SureTxn("t", date(2026, 10, 2), 3809, "Transfer to Venmo - VENMO PAYMENT", "mine", "a", "Checking", None)
+    txn = SureTxn("t", date(2026, 10, 2), 2150, "Transfer to Venmo - VENMO PAYMENT", "mine", "a", "Checking", None)
     purchase = by_id(purchases_from(parse_statement(STATEMENT)))["1001"]
     result = plan(txn, purchase)
     assert result.action == "rename" and result.name == "Venmo to Alex Doe: pizza \U0001F355"
     assert result.notes == f"mine\n{ORIGINAL_MARKER}Transfer to Venmo - VENMO PAYMENT"
     # Renaming again doesn't stack the original text.
-    again = plan(SureTxn("t", txn.date, 3809, "something", result.notes, "a", "Checking", None), purchase)
+    again = plan(SureTxn("t", txn.date, 2150, "something", result.notes, "a", "Checking", None), purchase)
     assert again.notes == result.notes
 
 
@@ -97,20 +97,20 @@ def story(pid, action, actor, target, amount, note, when, status="settled"):
 
 
 STORIES = [
-    story("1", "pay", ME, ALEX, 38.09, "pizza", "2026-10-01T12:00:00"),        # I paid Alex
+    story("1", "pay", ME, ALEX, 21.50, "pizza", "2026-10-01T12:00:00"),        # I paid Alex
     story("2", "pay", SAM, ME, 40.0, "dinner", "2026-10-02T12:00:00"),         # Sam paid me
-    story("3", "charge", ME, ALEX, 25.19, "tickets", "2026-10-03T12:00:00"),   # I requested, Alex paid
-    story("4", "charge", SAM, ME, 76.20, "utilities", "2026-10-07T12:00:00"),  # Sam requested, I paid
+    story("3", "charge", ME, ALEX, 25.00, "tickets", "2026-10-03T12:00:00"),   # I requested, Alex paid
+    story("4", "charge", SAM, ME, 88.00, "utilities", "2026-10-07T12:00:00"),  # Sam requested, I paid
     story("5", "pay", ME, SAM, 9.0, "oops", "2026-10-08T12:00:00", status="cancelled"),
 ]
 
 
 def test_stories_become_rows_with_the_right_direction():
     rows = {r.id: r for r in rows_from_stories(STORIES, "100")}
-    assert rows["1"].cents == -3809 and rows["1"].counterparty == "Alex Doe"
+    assert rows["1"].cents == -2150 and rows["1"].counterparty == "Alex Doe"
     assert rows["2"].cents == 4000 and rows["2"].counterparty == "Sam Roe"
-    assert rows["3"].cents == 2519 and rows["3"].counterparty == "Alex Doe"
-    assert rows["4"].cents == -7620 and rows["4"].counterparty == "Sam Roe"
+    assert rows["3"].cents == 2500 and rows["3"].counterparty == "Alex Doe"
+    assert rows["4"].cents == -8800 and rows["4"].counterparty == "Sam Roe"
     assert "5" not in rows
 
 
@@ -120,7 +120,7 @@ def transfer(tid, cents, when, fee=0):
                          "status": "issued", "destination": {"type": "bank", "name": "Example Bank"}}}
 
 
-CASH_OUTS = [transfer("901", 4000, "2026-10-02T18:00:00"), transfer("902", 2519, "2026-10-05T18:00:00")]
+CASH_OUTS = [transfer("901", 4000, "2026-10-02T18:00:00"), transfer("902", 2500, "2026-10-05T18:00:00")]
 
 
 def parts(p):
@@ -132,7 +132,7 @@ def test_cash_outs_split_into_what_came_in_since_the_previous_one():
     outs = {p.external_id: p for p in purchases_from(rows) if p.amount_cents < 0}
     assert outs["901"].amount_cents == -4000 and parts(outs["901"]) == [("Venmo from Sam Roe: dinner", -4000)]
     # Not Sam again: he was in the first.
-    assert outs["902"].amount_cents == -2519 and parts(outs["902"]) == [("Venmo from Alex Doe: tickets", -2519)]
+    assert outs["902"].amount_cents == -2500 and parts(outs["902"]) == [("Venmo from Alex Doe: tickets", -2500)]
     assert outs["901"].description is None
 
 
@@ -277,12 +277,12 @@ def test_fetch_describes_payments_and_cash_outs(venmo):
     _, source = venmo
     source.login({"token": "tok-123"}, None)
     pull = lambda tid, d, cents: SureTxn(tid, d, cents, "VENMO PAYMENT", None, "a", "Chk", None)  # noqa: E731
-    bank = [pull("b1", date(2026, 10, 2), 3809), pull("b4", date(2026, 10, 8), 7620)]
+    bank = [pull("b1", date(2026, 10, 2), 2150), pull("b4", date(2026, 10, 8), 8800)]
     got = {p.external_id: p for p in source.fetch(date(2026, 9, 20), txns=bank)}
-    assert got["1"].amount_cents == 3809 and got["1"].description == "Venmo to Alex Doe: pizza"
-    assert got["4"].amount_cents == 7620 and got["4"].description == "Venmo to Sam Roe: utilities"
+    assert got["1"].amount_cents == 2150 and got["1"].description == "Venmo to Alex Doe: pizza"
+    assert got["4"].amount_cents == 8800 and got["4"].description == "Venmo to Sam Roe: utilities"
     assert got["901"].amount_cents == -4000 and parts(got["901"]) == [("Venmo from Sam Roe: dinner", -4000)]
-    assert parts(got["902"]) == [("Venmo from Alex Doe: tickets", -2519)]
+    assert parts(got["902"]) == [("Venmo from Alex Doe: tickets", -2500)]
     assert "2" not in got and "3" not in got  # money in only shows up via a cash-out
 
 
@@ -326,7 +326,7 @@ def test_a_cash_out_just_inside_the_lookback_still_names_earlier_payments(venmo)
     source.login({"token": "tok-123"}, None)
     got = {p.external_id: p for p in source.fetch(date(2026, 10, 4))}
     assert {"902"} <= set(got) and "901" not in got
-    assert parts(got["902"]) == [("Venmo from Alex Doe: tickets", -2519)]  # paid 10-03, before the lookback
+    assert parts(got["902"]) == [("Venmo from Alex Doe: tickets", -2500)]  # paid 10-03, before the lookback
 
 
 def test_transaction_list_shows_the_source_and_filters_every_column(tmp_path):
@@ -341,7 +341,7 @@ def test_transaction_list_shows_the_source_and_filters_every_column(tmp_path):
 
     source = VenmoSource(tmp_path / "venmo")
     state = State(tmp_path / "s.db")
-    t = SureTxn("t1", date(2026, 10, 2), 3066, "VENMO PAYMENT", None, "a", "Checking", None)
+    t = SureTxn("t1", date(2026, 10, 2), 1234, "VENMO PAYMENT", None, "a", "Checking", None)
     state.record(t, "venmo", "planned", Plan(t, None, "rename", name="Venmo to Alex Doe: pizza"), reason="dry run")
     cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30, run_times=("07:30",),
                  run_on_start=False, web_port=0, data_dir=tmp_path, sources=("venmo",))

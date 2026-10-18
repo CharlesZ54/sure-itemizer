@@ -72,7 +72,7 @@ class Row:
 
 
 def _amount(text: str) -> int:
-    """'- $38.09' / '+ $1,234.56' / '$0.00' / '' -> signed cents."""
+    """'- $12.34' / '+ $1,234.56' / '$0.00' / '' -> signed cents."""
     text = (text or "").strip()
     if not text:
         return 0
