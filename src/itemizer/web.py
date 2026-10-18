@@ -293,6 +293,9 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                             f'autocomplete="{auto}">')
 
                 fields = "".join(field(f) for f in source.login_fields)
+                if source.help_url:
+                    fields = (f'<p><a href="{html.escape(source.help_url)}" target="_blank" rel="noopener">'
+                              f'How to get these →</a></p>') + fields
                 inner = (f'<form method="post">{fields}<p><button class="primary">Sign in</button></p></form>'
                          f'<p class="muted">Used once to sign in, then discarded. Only the session {title} issues '
                          f'is kept. If {title} asks for a verification code, you\'ll be prompted here.</p>')

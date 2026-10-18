@@ -254,3 +254,23 @@ def test_no_password_sign_in_without_a_trusted_device(venmo):
     with pytest.raises(ValueError, match="device it already trusts"):
         source.login({"username": "me@example.com", "password": "pw", "device_id": "", "token": ""}, CodeIO("1"))
     assert fake.calls == []  # never even tried: failed attempts can lock the account
+
+
+def test_connect_page_links_the_venmo_guide(tmp_path):
+    import urllib.request
+
+    from itemizer.config import Config
+    from itemizer.notify import Notifier
+    from itemizer.runner import Runner
+    from itemizer.state import State
+    from itemizer.web import serve
+
+    source = VenmoSource(tmp_path / "venmo")
+    state = State(tmp_path / "s.db")
+    cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30, run_times=("07:30",),
+                 run_on_start=False, web_port=0, data_dir=tmp_path, sources=("venmo",))
+    server = serve(0, state, Runner(cfg, None, [source], state), Notifier(None, None, state), [source], True)
+    page = urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/connect/venmo").read().decode()
+    assert 'href="https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/venmo.md"' in page
+    assert 'name="device_id"' in page and 'name="token"' in page
+    server.shutdown()

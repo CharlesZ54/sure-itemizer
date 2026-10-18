@@ -224,6 +224,7 @@ class VenmoSource(Source):
     sure_search = "venmo"
     # Bank pulls for Venmo payments post the same day or a few after.
     date_window = (1, 5)
+    help_url = "https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/venmo.md"
     login_fields = [
         ("username", "Venmo email or phone", "text", True),
         ("password", "Venmo password", "password", True),
