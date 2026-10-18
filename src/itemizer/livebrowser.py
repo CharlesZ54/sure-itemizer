@@ -91,21 +91,23 @@ class LiveBrowser:
                     context.on("page", lambda p: pages.append(p))
                     pages[-1].goto(url, wait_until="domcontentloaded", timeout=45000)
                     self._set(state="running")
-                    if self._loop(context, pages, signed_in):
+                    signed = self._loop(context, pages, signed_in)
+                    if signed:
                         self._set(state="saving")
                         save(context)
-                        self._set(state="done")
-                        log.info("live sign-in finished; session saved")
-                    else:
-                        self._set(state="failed", error=self.error or "closed")
                 finally:
                     browser.close()
+            if not signed:
+                self._set(state="failed", error=self.error or "closed")
+                return
+            if on_success:
+                on_success()
+            # Only now: whoever watches for "done" can rely on everything above.
+            self._set(state="done")
+            log.info("live sign-in finished; session saved")
         except Exception as e:
             log.warning("live browser failed: %s", e)
             self._set(state="failed", error=str(e).splitlines()[0][:300])
-            return
-        if self.state == "done" and on_success:
-            on_success()
 
     def _loop(self, context, pages, signed_in) -> bool:
         last_input = time.monotonic()
