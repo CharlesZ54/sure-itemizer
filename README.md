@@ -32,7 +32,7 @@ Everything it decides is recorded in `/data/itemizer.db` and shown on a small st
 
 ## Connecting Amazon
 
-Open the status page, go to **Integrations → Amazon → Connect**, and sign in. If Amazon asks where to send a code, or for the 6-digit code itself (or, rarely, a captcha), the page prompts you.
+Open the status page, go to **Integrations → Amazon → Connect**, and sign in. If Amazon asks where to send a code, or for the 6-digit code itself (or, rarely, a captcha), the page prompts you. If Amazon answers with a JavaScript check instead of a sign-in form, a headless Chromium inside the container passes it and hands the session back. That happens only while signing in, which is why the image carries a browser and the template allows 1 GB of memory.
 
 - **Your email and password are used once and thrown away.** They aren't configuration, and they aren't written anywhere. The only thing kept is the session Amazon issues (`/data/amazon/cookies.json`, mode 600), the same thing your browser keeps when you tick "Keep me signed in".
 - **No authenticator secret is ever needed.** Two-step verification keeps working as intended.

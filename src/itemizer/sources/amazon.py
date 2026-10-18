@@ -246,6 +246,14 @@ class AmazonSource(Source):
                 # Be a polite, low-volume client.
                 "thread_pool_size": 2,
                 "connection_pool_size": 4,
+                # Amazon sometimes answers a sign-in with a JavaScript check
+                # that plain HTTP can't pass; these hand just that step to
+                # headless Chromium and carry its cookies back.
+                "auth_forms_classes": [
+                    "amazonorders.contrib.browser.playwright.PlaywrightAcicForm",
+                    "amazonorders.contrib.browser.playwright.PlaywrightJSAuthForm",
+                ],
+                "browser": "chromium",
                 **({"domain": self.domain} if self.domain else {}),
             },
         )

@@ -17,7 +17,7 @@ Connect Amazon from the web UI: your email and password are used once to sign in
   <Category>Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:8686]/</WebUI>
   <Icon>https://raw.githubusercontent.com/we-promise/sure/main/public/logo-pwa.png</Icon>
-  <ExtraParams>--memory=512m</ExtraParams>
+  <ExtraParams>--memory=1g</ExtraParams>
   <PostArgs/>
   <Config Name="Status page" Target="8686" Default="8686" Mode="tcp" Description="Status page and Run now button" Type="Port" Display="always" Required="true" Mask="false">8686</Config>
   <Config Name="Data" Target="/data" Default="/mnt/user/appdata/sure-itemizer/data" Mode="rw" Description="State database and the saved Amazon session" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sure-itemizer/data</Config>
