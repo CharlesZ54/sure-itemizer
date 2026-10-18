@@ -27,8 +27,8 @@ log = logging.getLogger(__name__)
 SIGN_IN_TIMEOUT = 300  # seconds for the whole sign-in, including the user's answers
 STUCK_AFTER = 25  # seconds on an unrecognized page before giving up
 
-EMAIL = "input[name='email']:visible"
-PASSWORD = "input[name='password']:visible"
+EMAIL = "input[name='email']:visible, input[type='email']:visible"
+PASSWORD = "input[type='password']:visible"
 ERROR = "#auth-error-message-box:visible, .a-alert-error:visible .a-alert-content"
 DEVICE_CHOICE = "input[name='otpDeviceContext']"
 OTP = ("input[name='otpCode']:visible, input#auth-mfa-otpcode:visible, input#cvf-input-code:visible, "
@@ -46,6 +46,18 @@ SKIP = ("#ap-account-fixup-phone-skip-link, a#ap-account-fixup-phone-skip-link, 
         "input[type='submit'][value*='Not now' i]")
 SUBMIT = ("input#signInSubmit, input#continue, #auth-send-code, #auth-signin-button, "
           "input[type='submit']:visible, button[type='submit']:visible")
+# Tell Amazon this browser can't do passkeys. Otherwise its "Enter your password"
+# link just reloads the passkey offer, since headless Chromium claims WebAuthn
+# support it can never complete.
+NO_PASSKEYS = """
+try { delete window.PublicKeyCredential; } catch (e) {}
+Object.defineProperty(window, "PublicKeyCredential", {value: undefined, configurable: true});
+if (navigator.credentials) {
+  const unsupported = () => Promise.reject(new DOMException("Not supported", "NotSupportedError"));
+  navigator.credentials.get = unsupported;
+  navigator.credentials.create = unsupported;
+}
+"""
 # Passkey offers can't be completed headlessly; these lead back to the password.
 USE_PASSWORD = re.compile(r"^\s*(your )?password\s*$|(enter|use|sign in with)( your| a)? password", re.I)
 OTHER_WAYS = re.compile(r"(sign in|try) (another|a different) way|other (sign-in )?(options|ways)", re.I)
@@ -78,6 +90,7 @@ class HeadlessSignIn(PlaywrightBrowserLogin):
                 # Amazon accepts the cookies outside the browser too.
                 context = browser.new_context(user_agent=constants.BASE_HEADERS.get("User-Agent"),
                                               locale="en-US", viewport={"width": 1280, "height": 900})
+                context.add_init_script(NO_PASSKEYS)
                 page = context.new_page()
                 page.goto(url, wait_until="domcontentloaded")
                 self._drive(context, page, email, password, timeout)
@@ -163,8 +176,7 @@ class HeadlessSignIn(PlaywrightBrowserLogin):
                 # a fingerprint that a headless browser doesn't have.
                 passkey_detours += 1
                 if passkey_detours > 4:
-                    raise SignInError("Amazon only offers a passkey sign-in here; turn on password sign-in "
-                                      "for your Amazon account, or try again later")
+                    raise SignInError("couldn't get from Amazon's passkey offer to its password page")
                 if _click(page, USE_PASSWORD) or _click(page, OTHER_WAYS):
                     last_change = time.monotonic()
                     continue

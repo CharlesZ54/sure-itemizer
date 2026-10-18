@@ -12,7 +12,7 @@ import pytest
 pytest.importorskip("playwright")
 from playwright.sync_api import sync_playwright  # noqa: E402
 
-from itemizer.sources.amazon_browser import HeadlessSignIn, SignInError  # noqa: E402
+from itemizer.sources.amazon_browser import NO_PASSKEYS, HeadlessSignIn, SignInError  # noqa: E402
 
 try:
     with sync_playwright() as _pw:
@@ -136,6 +136,7 @@ def drive(fake, io, password):
     with sync_playwright() as pw:
         browser = pw.chromium.launch(headless=True, channel="chromium")
         context = browser.new_context()
+        context.add_init_script(NO_PASSKEYS)
         page = context.new_page()
         page.goto(fake.base + "/signin")
         try:
@@ -178,3 +179,16 @@ def test_unknown_page_error_hides_email_and_phone(monkeypatch):
     msg = str(e.value)
     assert "doesn't recognize" in msg and "example.com" not in msg and "555" not in msg
     assert "<email>" in msg and "<phone>" in msg
+
+
+def test_amazon_is_told_this_browser_has_no_passkeys():
+    fake = FakeAmazon()
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True, channel="chromium")
+        context = browser.new_context()
+        context.add_init_script(NO_PASSKEYS)
+        page = context.new_page()
+        page.goto(fake.base + "/signin")
+        assert page.evaluate("typeof window.PublicKeyCredential") == "undefined"
+        assert page.evaluate("navigator.credentials.get({}).then(() => 'ok', e => e.name)") == "NotSupportedError"
+        browser.close()
