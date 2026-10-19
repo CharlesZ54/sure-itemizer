@@ -9,18 +9,20 @@
   <Support>https://github.com/CharlesZ54/sure-itemizer/issues</Support>
   <Project>https://github.com/CharlesZ54/sure-itemizer</Project>
   <ReadMe>https://github.com/CharlesZ54/sure-itemizer#readme</ReadMe>
-  <Overview>Splits merchant charges in Sure (we-promise/sure) into the items they paid for, so Sure's AI categorizer can categorize each item. Amazon, Target, eBay and Venmo are supported; other merchants plug in as sources.&#xD;
+  <Overview>Splits and renames merchant transactions in Sure (we-promise/sure) using the merchant's own order data, so Sure's AI categorizer sees what was actually bought instead of just the store name.&#xD;
 &#xD;
-Starts in DRY RUN: it shows the splits it would make on its status page and writes nothing to Sure until you set DRY_RUN=false. Splitting needs Sure v0.7.6 or newer.&#xD;
+Amazon, Target and eBay: each charge is split into the items it paid for, with tax and shipping spread by price. Venmo: payments from your bank are renamed (&quot;Venmo to Alex: pizza&quot;), and cash-outs are split into the payments behind them.&#xD;
 &#xD;
-Connect Amazon from the web UI: your email and password are used once to sign in and never stored, and 2-step codes are entered there too. When the session expires, it notifies the webhook and waits for you to reconnect.</Overview>
+Starts in DRY RUN: the status page shows what it would change, and nothing is written to Sure until you set DRY_RUN=false. Splits need Sure v0.7.6 or newer; renames work on any version.&#xD;
+&#xD;
+Choose merchants with Sources, then connect each one from the status page (Integrations, Connect). Amazon, Target and Venmo passwords are used once to sign in and never stored; eBay uses your own free eBay developer keys. Step-by-step guides are in the README. Set an Apprise URL to be told when a merchant needs you to sign in again or a run fails.</Overview>
   <Category>Productivity: Tools:</Category>
   <WebUI>http://[IP]:[PORT:8686]/</WebUI>
   <Icon>https://raw.githubusercontent.com/we-promise/sure/main/public/logo-pwa.png</Icon>
   <ExtraParams>--memory=1g</ExtraParams>
   <PostArgs/>
   <Config Name="Status page" Target="8686" Default="8686" Mode="tcp" Description="Status page and Run now button" Type="Port" Display="always" Required="true" Mask="false">8686</Config>
-  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/sure-itemizer/data" Mode="rw" Description="State database and the saved Amazon session" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sure-itemizer/data</Config>
+  <Config Name="Data" Target="/data" Default="/mnt/user/appdata/sure-itemizer/data" Mode="rw" Description="State database and saved merchant sign-ins" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/sure-itemizer/data</Config>
   <Config Name="Sure URL" Target="SURE_URL" Default="" Mode="" Description="e.g. http://192.168.1.10:3000" Type="Variable" Display="always" Required="true" Mask="false"/>
   <Config Name="Sure API key" Target="SURE_API_KEY" Default="" Mode="" Description="Sure → Settings → API keys, read_write scope" Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="Dry run" Target="DRY_RUN" Default="true|false" Mode="" Description="true = only show planned splits; false = write them to Sure" Type="Variable" Display="always" Required="true" Mask="false">true</Config>
