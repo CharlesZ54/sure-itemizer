@@ -23,7 +23,7 @@ If you can't find `v_id`, open the *Network* tab, reload the page or sign in aga
 
 ## Revoking access
 
-The token stays valid until it's revoked; **Disconnect** only deletes sure-itemizer's copy. To revoke it, for example if it leaked, run this on the Unraid host (it reads the saved token and asks Venmo to sign it out):
+The token stays valid until it's revoked; **Disconnect** only deletes sure-itemizer's copy. To revoke it, for example if it leaked, run this on the machine running the container (it reads the saved token and asks Venmo to sign it out):
 
 ```sh
 docker exec sure-itemizer python -c "

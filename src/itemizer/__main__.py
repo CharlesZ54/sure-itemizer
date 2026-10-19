@@ -111,7 +111,7 @@ def main(argv: list[str]) -> int:
     log.info("mode: %s; sources: %s; schedule: %s", "DRY RUN" if cfg.dry_run else "LIVE",
              ",".join(cfg.sources), ",".join(cfg.run_times))
     if not sources:
-        while True:  # nothing to do until the template is fixed and the container restarted
+        while True:  # nothing to do until the configuration is fixed and the container restarted
             time.sleep(3600)
     if cfg.run_on_start:
         _guarded(runner, log)

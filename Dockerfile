@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# tzdata so RUN_TIMES follow the TZ Unraid passes in; tini reaps the browser's
+# tzdata so RUN_TIMES follow the container's TZ; tini reaps the browser's
 # leftover processes after a sign-in (Python as PID 1 would leave zombies)
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata tini \
     && rm -rf /var/lib/apt/lists/*
@@ -20,7 +20,8 @@ RUN mkdir -p src/itemizer && touch src/itemizer/__init__.py \
     && chmod -R o+rX /ms-playwright
 COPY src ./src
 RUN pip install --no-cache-dir --no-deps --force-reinstall .
-# Unraid's nobody:users, so files in /data stay editable from the share
+# Runs as UID 99 / GID 100 (nobody:users on many NAS systems); the /data
+# directory must be writable by it, or override with --user
 RUN useradd --uid 99 --gid 100 --no-create-home --shell /usr/sbin/nologin itemizer
 
 ENV DATA_DIR=/data PYTHONUNBUFFERED=1 HOME=/tmp

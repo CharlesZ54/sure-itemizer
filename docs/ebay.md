@@ -57,7 +57,7 @@ The **Dev ID** isn't needed. Treat the Cert ID like a password.
 
 ## 6. Connect in sure-itemizer
 
-1. Add `ebay` to the container's **SOURCES** variable (e.g. `amazon,target,venmo,ebay`) and apply.
+1. Add `ebay` to the container's **SOURCES** environment variable (e.g. `amazon,target,venmo,ebay`) and restart the container.
 2. Open the status page → **Integrations → eBay → Connect**. The **How to get these →** link there leads back to this page.
 3. Paste the App ID, Cert ID and RuName, then **Sign in**.
 4. Choose **Open the sign-in page ↗**. In the new tab, sign in with **the eBay account you buy with** and choose **Agree**.
