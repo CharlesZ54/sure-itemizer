@@ -36,6 +36,7 @@ class TargetSource(Source):
     # few after the purchase.
     date_window = (1, 6)
     live_url = "https://www.target.com/account"
+    help_url = "https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/target.md"
     login_fields = [("email", "Target email", "email"), ("password", "Target password", "password")]
 
     def __init__(self, data_dir: Path, account_filter: str | None = None) -> None:

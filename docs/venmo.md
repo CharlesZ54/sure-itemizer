@@ -1,4 +1,14 @@
-# Connecting Venmo
+# Venmo
+
+Payments are renamed, with the bank's original text kept in the notes. Cash-outs are split into the payments behind them. Add `venmo` to `SOURCES`.
+
+- **A payment you made from your bank** (`VENMO PAYMENT`) becomes *"Venmo to Alex Doe: pizza"*. That includes requests from others that you paid.
+- **A cash-out** (`VENMO CASHOUT`) is split into the payments received since the previous cash-out (*"Venmo from Sam Roe: dinner"*), less the payments you made from your Venmo balance in that time (*"Venmo to Alex Doe: pizza"*), so Sure's AI categorizes each one. If money was already in the balance, or some was left there, a *"Venmo balance from before"* or *"Left in the Venmo balance"* line makes the parts add up; an instant transfer's fee gets a line too. Cash-out splits need Sure v0.7.6 or newer; renames work on any version.
+- A payment counts as paid from the balance when the bank has no Venmo pull of the same amount around its date. For exact answers, drop Venmo statement CSVs (venmo.com → Statements → Download CSV) into `/data/venmo/statements/`: they say how each payment was funded.
+
+The API is unofficial: Venmo can change it at any time, and unusual access could draw attention to the account.
+
+## Connecting
 
 sure-itemizer reads your Venmo payments through Venmo's **unofficial** mobile API, the one the [venmo-api](https://github.com/mmohades/Venmo) Python library uses. It only ever reads; there is no code in this project that can move money. The Connect page (**Integrations → Venmo → Connect**) asks for your email or phone, your password, and a **trusted device ID** ([how to get it](#getting-a-trusted-device-id-v_id)). If Venmo then texts you a code, the page asks for it.
 
@@ -35,3 +45,9 @@ print('revoked' if r.ok else f'Venmo said {r.status_code}')
 ```
 
 Then choose **Disconnect** (or **Reconnect** to get a new token).
+
+## Settings
+
+| Variable | Default | |
+|---|---|---|
+| `VENMO_SURE_ACCOUNT` | — | Only look at this Sure account (its id, or part of its name) for Venmo |

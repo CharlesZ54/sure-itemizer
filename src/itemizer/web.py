@@ -379,7 +379,7 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                 fields = "".join(field(f) for f in source.login_fields)
                 if source.help_url:
                     fields = (f'<p><a href="{html.escape(source.help_url)}" target="_blank" rel="noopener">'
-                              f'How to get these →</a></p>') + fields
+                              f'Setup guide →</a></p>') + fields
                 note = html.escape(source.login_note) if source.login_note else (
                     f"Used once to sign in, then discarded. Only the session {title} issues is kept. "
                     f"If {title} asks for a verification code, you'll be prompted here.")

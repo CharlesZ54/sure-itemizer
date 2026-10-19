@@ -43,7 +43,7 @@ class Source(ABC):
     sure_search: str
     #: How far the merchant's date may sit before/after the bank's date.
     date_window: tuple[int, int] = (3, 5)
-    #: Shown on the Connect page as "How to get these": a guide to the fields.
+    #: Shown on the Connect page as "Setup guide": a guide to the fields.
     help_url: str | None = None
     #: Fields the Connect page asks for: (name, label, html input type), plus
     #: an optional fourth element True for a field that may be left empty.

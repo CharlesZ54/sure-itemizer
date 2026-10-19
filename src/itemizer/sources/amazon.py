@@ -213,6 +213,7 @@ class AmazonSource(Source):
     # The Transactions page date is when Amazon charged; the card usually
     # posts the same day or a few days later.
     date_window = (2, 5)
+    help_url = "https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/amazon.md"
     login_fields = [("email", "Amazon email", "email"), ("password", "Amazon password", "password")]
 
     def __init__(self, data_dir: Path, domain: str | None = None) -> None:

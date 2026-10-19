@@ -1,4 +1,6 @@
-# Connecting eBay
+# eBay
+
+Each eBay card charge is split into the items in the order, like Amazon's. The bank line quotes eBay's order number (`EBAY O*12-34567-89012`), so each charge goes to its own order. Add `ebay` to `SOURCES`.
 
 sure-itemizer reads your eBay purchases through eBay's **official** API, which splits each eBay charge into the items in the order. eBay only gives API access to registered developers, so you'll set up a free developer account and an "application" of your own once (about 15 minutes, plus eBay's approval). Nobody else's keys are involved: your keys only ever reach your own eBay account.
 
@@ -58,7 +60,7 @@ The **Dev ID** isn't needed. Treat the Cert ID like a password.
 ## 6. Connect in sure-itemizer
 
 1. Add `ebay` to the container's **SOURCES** environment variable (e.g. `amazon,target,venmo,ebay`) and restart the container.
-2. Open the status page → **Integrations → eBay → Connect**. The **How to get these →** link there leads back to this page.
+2. Open the status page → **Integrations → eBay → Connect**. The **Setup guide →** link there leads back to this page.
 3. Paste the App ID, Cert ID and RuName, then **Sign in**.
 4. Choose **Open the sign-in page ↗**. In the new tab, sign in with **the eBay account you buy with** and choose **Agree**.
 5. eBay sends you to a page saying the authorization succeeded (it may say you can close the window). **Copy that page's entire address** from the address bar. It contains `code=`.
@@ -78,6 +80,12 @@ The status page should show **eBay · Connected**, and the next run reads your o
 - **PayPal-paid orders** show up in the bank as PayPal, not eBay, so they aren't matched.
 - **Refunds:** a refund on a single-item order, or of the whole order, is split like the charge. A partial refund on a multi-item order is only renamed (*"eBay refund: USB cable, Phone case"*), because eBay doesn't say which item it was for.
 - **Shipping and tax** are spread over an order's items by price.
+
+## Settings
+
+| Variable | Default | |
+|---|---|---|
+| `EBAY_SURE_ACCOUNT` | — | Only look at this Sure account (its id, or part of its name) for eBay |
 
 ## Troubleshooting
 
