@@ -61,6 +61,7 @@ services:
       SURE_API_KEY: your-sure-api-key
       DRY_RUN: "true"
       SOURCES: amazon
+      SCHEDULE: "30 7 * * *"
       TZ: America/New_York
       # APPRISE_URL: discord://webhook_id/webhook_token
       # PUBLIC_URL: http://nas.example.lan:8686
@@ -102,14 +103,14 @@ You'll hear about it when a merchant needs you to sign in again, and when a run 
 | `DRY_RUN` | `true` | Plan and show what *would* change; write nothing |
 | `SOURCES` | `amazon` | Comma-separated: `amazon`, `target`, `venmo`, `ebay` |
 | `LOOKBACK_DAYS` | `30` | How far back to look for unprocessed transactions |
-| `RUN_TIMES` | `07:30` | Comma-separated local times (`TZ`) |
+| `SCHEDULE` | `30 7 * * *` | When to run, as a cron expression (minute hour day-of-month month day-of-week) in `TZ`; e.g. `0 7,19 * * *` for 07:00 and 19:00 |
 | `RUN_ON_START` | `true` | |
 | `WEB_PORT` | `8686` | Status page |
-| `TZ` | `UTC` | Time zone for `RUN_TIMES`, e.g. `America/New_York` |
+| `TZ` | `UTC` | Time zone for `SCHEDULE`, e.g. `America/New_York` |
 | `APPRISE_URL` | — | Where to send notifications (Apprise URLs, comma-separated) |
 | `PUBLIC_URL` | — | How you reach the status page; linked from notifications |
 
-Merchant-specific settings (such as `AMZN_DOMAIN` or `VENMO_SURE_ACCOUNT`) are listed in each merchant's guide.
+Merchant choices (such as which Amazon site) are made on each merchant's Connect page, not in variables.
 
 ## Commands
 

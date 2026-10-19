@@ -110,7 +110,7 @@ def env(tmp_path):
         server = ThreadingHTTPServer(("127.0.0.1", 0), fake.handler())
         threading.Thread(target=server.serve_forever, daemon=True).start()
         cfg = Config(sure_url=f"http://127.0.0.1:{server.server_port}", sure_api_key="k", dry_run=dry_run,
-                     lookback_days=30, run_times=("07:30",), run_on_start=False, web_port=0,
+                     lookback_days=30, run_on_start=False, web_port=0,
                      data_dir=tmp_path, sources=("amazon",))
         source = FakeSource(purchases)
         state = State(tmp_path / "t.db")

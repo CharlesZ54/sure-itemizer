@@ -81,11 +81,6 @@ The status page should show **eBay · Connected**, and the next run reads your o
 - **Refunds:** a refund on a single-item order, or of the whole order, is split like the charge. A partial refund on a multi-item order is only renamed (*"eBay refund: USB cable, Phone case"*), because eBay doesn't say which item it was for.
 - **Shipping and tax** are spread over an order's items by price.
 
-## Settings
-
-| Variable | Default | |
-|---|---|---|
-| `EBAY_SURE_ACCOUNT` | — | Only look at this Sure account (its id, or part of its name) for eBay |
 
 ## Troubleshooting
 

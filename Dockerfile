@@ -1,6 +1,6 @@
 FROM python:3.12-slim
 
-# tzdata so RUN_TIMES follow the container's TZ; tini reaps the browser's
+# tzdata so SCHEDULE follows the container's TZ; tini reaps the browser's
 # leftover processes after a sign-in (Python as PID 1 would leave zombies)
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata tini \
     && rm -rf /var/lib/apt/lists/*

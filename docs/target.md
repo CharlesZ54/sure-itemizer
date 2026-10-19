@@ -20,9 +20,3 @@ The live view is also available on its own from the Connect page (*Or sign in yo
 Only the browser's session is kept (`/data/target/state.json`, mode 600). Your email and password are used once and thrown away.
 
 If Target keeps answering the check with "Please try again", stop and wait a day or two before trying again: repeated attempts make its bot protection stricter.
-
-## Settings
-
-| Variable | Default | |
-|---|---|---|
-| `TARGET_SURE_ACCOUNT` | — | Only look at this Sure account (its id, or part of its name) for Target |

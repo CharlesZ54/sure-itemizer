@@ -242,14 +242,13 @@ class VenmoSource(Source):
         ("device_id", "Trusted device ID: the v_id cookie from a browser signed in to Venmo", "text", True),
     ]
 
-    def __init__(self, data_dir: Path, account_filter: str | None = None) -> None:
-        super().__init__(account_filter)
+    def __init__(self, data_dir: Path) -> None:
         self.data_dir = Path(data_dir)
         self._lock = threading.Lock()
 
     @classmethod
     def from_config(cls, cfg: Config) -> "VenmoSource":
-        return cls(data_dir=cfg.data_dir / "venmo", account_filter=cfg.source_setting("VENMO", "SURE_ACCOUNT"))
+        return cls(data_dir=cfg.data_dir / "venmo")
 
     @property
     def auth_path(self) -> Path:

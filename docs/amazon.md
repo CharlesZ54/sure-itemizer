@@ -11,7 +11,7 @@ Add `amazon` to `SOURCES` (it's the default).
 
 ## Connecting
 
-Open the status page, go to **Integrations → Amazon → Connect**, and sign in. If Amazon asks where to send a code, or for the 6-digit code itself (or, rarely, a captcha), the page prompts you. The sign-in happens on Amazon's real sign-in page, in a headless Chromium inside the container, because Amazon rejects password submissions that don't come from a real browser, even when the password is right. Chromium runs only while you sign in, which is why the image carries a browser and the container should be allowed about 1 GB of memory. If Amazon shows a page the script doesn't recognize, you can finish signing in yourself through a live view of that browser (*Or sign in yourself…* on the Connect page).
+Open the status page, go to **Integrations → Amazon → Connect**, choose your **Amazon site** (amazon.com, amazon.co.uk, amazon.de, …), and sign in. The site is remembered for later runs and reconnects; only amazon.com has been tested. If Amazon asks where to send a code, or for the 6-digit code itself (or, rarely, a captcha), the page prompts you. The sign-in happens on Amazon's real sign-in page, in a headless Chromium inside the container, because Amazon rejects password submissions that don't come from a real browser, even when the password is right. Chromium runs only while you sign in, which is why the image carries a browser and the container should be allowed about 1 GB of memory. If Amazon shows a page the script doesn't recognize, you can finish signing in yourself through a live view of that browser (*Or sign in yourself…* on the Connect page).
 
 - **Your email and password are used once and thrown away.** They aren't configuration, and they aren't written anywhere. The only thing kept is the session Amazon issues (`/data/amazon/cookies.json`, mode 600), the same thing your browser keeps when you tick "Keep me signed in".
 - **No authenticator secret is ever needed.** Two-step verification keeps working as intended.
@@ -29,14 +29,6 @@ You can also sign in from a terminal: `docker exec -it sure-itemizer itemizer lo
 
 - **One item:** still a one-row split, so Sure's AI categorizes it from the item's name rather than from "Amazon".
 - **Refunds:** handled only when the order had a single product, because Amazon doesn't say which item came back.
-
-## Settings
-
-| Variable | Default | |
-|---|---|---|
-| `AMZN_DOMAIN` | `amazon.com` | Other Amazon marketplaces are untested |
-
-The Amazon variables are `AMZN_*`, not `AMAZON_*`, because the `amazon-orders` library reads every `AMAZON_*` variable as its own setting.
 
 ## Caveats
 

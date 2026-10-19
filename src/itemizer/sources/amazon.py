@@ -9,6 +9,7 @@ and finding the one assignment that fits every charge.
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -205,6 +206,20 @@ def order_view(order) -> OrderView:
     return OrderView(number=order.order_number, groups=groups, grand_total_cents=total)
 
 
+# Amazon sites offered on the Connect page. Only amazon.com is tested; the
+# amazon-orders library reads the others in English where the site offers it.
+DEFAULT_SITE = "amazon.com"
+SITES = [
+    ("amazon.com", "United States"), ("amazon.ca", "Canada"), ("amazon.com.mx", "Mexico"),
+    ("amazon.com.br", "Brazil"), ("amazon.co.uk", "United Kingdom"), ("amazon.de", "Germany"),
+    ("amazon.fr", "France"), ("amazon.it", "Italy"), ("amazon.es", "Spain"), ("amazon.nl", "Netherlands"),
+    ("amazon.se", "Sweden"), ("amazon.pl", "Poland"), ("amazon.com.be", "Belgium"), ("amazon.ie", "Ireland"),
+    ("amazon.com.tr", "Turkey"), ("amazon.ae", "United Arab Emirates"), ("amazon.sa", "Saudi Arabia"),
+    ("amazon.in", "India"), ("amazon.co.jp", "Japan"), ("amazon.sg", "Singapore"),
+    ("amazon.com.au", "Australia"),
+]
+
+
 class AmazonSource(Source):
     name = "amazon"
     title = "Amazon"
@@ -214,22 +229,41 @@ class AmazonSource(Source):
     # posts the same day or a few days later.
     date_window = (2, 5)
     help_url = "https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/amazon.md"
-    login_fields = [("email", "Amazon email", "email"), ("password", "Amazon password", "password")]
+    login_fields = [("domain", "Amazon site", [(d, f"{name} ({d})") for d, name in SITES]),
+                    ("email", "Amazon email", "email"), ("password", "Amazon password", "password")]
 
-    def __init__(self, data_dir: Path, domain: str | None = None) -> None:
+    def __init__(self, data_dir: Path) -> None:
         super().__init__()
         self.data_dir = Path(data_dir)
-        self.domain = domain
         self._session = None
         self._lock = threading.Lock()
 
     @classmethod
     def from_config(cls, cfg: Config) -> "AmazonSource":
-        return cls(data_dir=cfg.data_dir / "amazon", domain=cfg.amazon_domain)
+        return cls(data_dir=cfg.data_dir / "amazon")
 
     @property
     def cookie_path(self) -> Path:
         return self.data_dir / "cookies.json"
+
+    @property
+    def site_path(self) -> Path:
+        return self.data_dir / "site.json"
+
+    @property
+    def domain(self) -> str:
+        """The Amazon site chosen on the Connect page (amazon.com until then)."""
+        try:
+            return json.loads(self.site_path.read_text())["domain"]
+        except (OSError, ValueError, KeyError):
+            return DEFAULT_SITE
+
+    def _save_domain(self, domain: str) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.site_path.write_text(json.dumps({"domain": domain}))
+
+    def login_defaults(self) -> dict[str, str]:
+        return {"domain": self.domain}
 
     def _new_session(self, username: str | None = None, password: str | None = None, io=None):
         from amazonorders.conf import AmazonOrdersConfig
@@ -245,7 +279,7 @@ class AmazonSource(Source):
                 # Be a polite, low-volume client.
                 "thread_pool_size": 2,
                 "connection_pool_size": 4,
-                **({"domain": self.domain} if self.domain else {}),
+                "domain": self.domain,
             },
         )
         return AmazonSession(username, password, io=io or IODefault(), config=config)
@@ -257,14 +291,19 @@ class AmazonSource(Source):
 
     def login(self, fields: dict[str, str], io) -> None:
         email, password = fields.get("email", "").strip(), fields.get("password", "")
+        domain = (fields.get("domain") or self.domain).strip().lower()
         if not email or not password:
             raise ValueError("email and password are required")
+        if domain not in dict(SITES):
+            raise ValueError(f"unknown Amazon site: {domain}")
         from .amazon_browser import HeadlessSignIn
 
         with self._lock:
             # A failed reconnect must not leave a half-written session behind,
             # nor destroy one that still worked.
             previous = self.cookie_path.read_bytes() if self.cookie_path.exists() else None
+            previous_domain = self.domain
+            self._save_domain(domain)
             try:
                 # The password goes to the browser only; the session object
                 # never holds it.
@@ -274,6 +313,7 @@ class AmazonSource(Source):
                 if not session.is_authenticated:
                     raise RuntimeError("Amazon didn't accept the sign-in")
             except BaseException:
+                self._save_domain(previous_domain)
                 if previous is None:
                     self.cookie_path.unlink(missing_ok=True)
                 else:
@@ -289,7 +329,7 @@ class AmazonSource(Source):
     def _constants(self):
         from amazonorders.conf import AmazonOrdersConfig
 
-        data = {"domain": self.domain} if self.domain else None
+        data = {"domain": self.domain}
         return AmazonOrdersConfig(config_path=str(self.data_dir / "config.yml"), data=data).constants
 
     @property

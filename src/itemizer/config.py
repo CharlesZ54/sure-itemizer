@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from .cron import Cron
+
 
 def _bool(value: str | None, default: bool) -> bool:
     if value is None or value.strip() == "":
@@ -16,13 +18,15 @@ def _env(name: str, default: str | None = None) -> str | None:
     return value if value not in (None, "") else default
 
 
+DEFAULT_SCHEDULE = "30 7 * * *"  # daily at 07:30
+
+
 @dataclass(frozen=True)
 class Config:
     sure_url: str
     sure_api_key: str
     dry_run: bool
     lookback_days: int
-    run_times: tuple[str, ...]
     run_on_start: bool
     web_port: int
     data_dir: Path
@@ -30,14 +34,10 @@ class Config:
     apprise_url: str | None = None
     # Where the user reaches the status page; put in notifications as a link.
     public_url: str | None = None
-
-    # Merchant credentials are deliberately not configuration: they are typed
-    # into the web UI at login time and never stored.
-    amazon_domain: str | None = None
-
-    def source_setting(self, prefix: str, key: str, default: str | None = None) -> str | None:
-        """A merchant's own setting, read from {PREFIX}_{KEY} (e.g. TARGET_SURE_ACCOUNT)."""
-        return _env(f"{prefix}_{key}", default)
+    # When to run, as a cron expression in the container's time zone (TZ).
+    # Merchant credentials and choices (such as the Amazon site) are
+    # deliberately not configuration: they're entered on the Connect pages.
+    schedule: str = DEFAULT_SCHEDULE
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -45,17 +45,21 @@ class Config:
         api_key = _env("SURE_API_KEY")
         if not sure_url or not api_key:
             raise SystemExit("SURE_URL and SURE_API_KEY are required")
+        schedule = " ".join(_env("SCHEDULE", DEFAULT_SCHEDULE).split())
+        try:
+            Cron(schedule)
+        except ValueError as e:
+            raise SystemExit(f"SCHEDULE isn't a valid cron expression: {e}") from None
         return cls(
             sure_url=sure_url.rstrip("/"),
             sure_api_key=api_key,
             dry_run=_bool(_env("DRY_RUN"), True),
             lookback_days=int(_env("LOOKBACK_DAYS", "30")),
-            run_times=tuple(t.strip() for t in _env("RUN_TIMES", "07:30").split(",") if t.strip()),
             run_on_start=_bool(_env("RUN_ON_START"), True),
             web_port=int(_env("WEB_PORT", "8686")),
             data_dir=Path(_env("DATA_DIR", "/data")),
             sources=tuple(s.strip().lower() for s in _env("SOURCES", "amazon").split(",") if s.strip()),
             apprise_url=_env("APPRISE_URL"),
             public_url=(_env("PUBLIC_URL") or "").rstrip("/") or None,
-            amazon_domain=_env("AMZN_DOMAIN"),
+            schedule=schedule,
         )

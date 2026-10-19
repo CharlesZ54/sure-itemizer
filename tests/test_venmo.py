@@ -307,8 +307,7 @@ def test_connect_page_links_the_venmo_guide(tmp_path):
 
     source = VenmoSource(tmp_path / "venmo")
     state = State(tmp_path / "s.db")
-    cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30, run_times=("07:30",),
-                 run_on_start=False, web_port=0, data_dir=tmp_path, sources=("venmo",))
+    cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30, run_on_start=False, web_port=0, data_dir=tmp_path, sources=("venmo",))
     server = serve(0, state, Runner(cfg, None, [source], state), Notifier(None, None, state), [source], True)
     page = urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/connect/venmo").read().decode()
     assert 'href="https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/venmo.md"' in page
@@ -338,8 +337,7 @@ def test_transaction_list_shows_the_source_and_filters_every_column(tmp_path):
     state = State(tmp_path / "s.db")
     t = SureTxn("t1", date(2026, 10, 2), 1234, "VENMO PAYMENT", None, "a", "Checking", None)
     state.record(t, "venmo", "planned", Plan(t, None, "rename", name="Venmo to Alex Doe: pizza"), reason="dry run")
-    cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30, run_times=("07:30",),
-                 run_on_start=False, web_port=0, data_dir=tmp_path, sources=("venmo",))
+    cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30, run_on_start=False, web_port=0, data_dir=tmp_path, sources=("venmo",))
     server = serve(0, state, Runner(cfg, None, [source], state), Notifier(None, None, state), [source], True)
     page = urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/").read().decode()
     server.shutdown()

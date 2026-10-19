@@ -46,23 +46,15 @@ class Source(ABC):
     #: Shown on the Connect page as "Setup guide": a guide to the fields.
     help_url: str | None = None
     #: Fields the Connect page asks for: (name, label, html input type), plus
-    #: an optional fourth element True for a field that may be left empty.
+    #: an optional fourth element True for a field that may be left empty. A
+    #: list of (value, label) pairs as the type makes a dropdown.
     #: Empty means the source needs no interactive login.
     login_fields: list[tuple] = []
     #: Shown under the Connect form instead of the default "used once, then discarded".
     login_note: str | None = None
 
-    def __init__(self, account_filter: str | None = None) -> None:
-        # Sure account id, or a case-insensitive substring of its name.
-        self.account_filter = account_filter
-
     def claims(self, txn: SureTxn) -> bool:
-        if not self.descriptor.search(txn.name):
-            return False
-        if self.account_filter:
-            f = self.account_filter.lower()
-            return txn.account_id == self.account_filter or f in txn.account_name.lower()
-        return True
+        return bool(self.descriptor.search(txn.name))
 
     @abstractmethod
     def fetch(self, since: date, amounts: set[int] | None = None,
@@ -101,6 +93,10 @@ class Source(ABC):
 
     def connected(self) -> bool:
         return True
+
+    def login_defaults(self) -> dict[str, str]:
+        """Values the Connect form starts with (e.g. a choice made last time)."""
+        return {}
 
     def login(self, fields: dict[str, str], io: Any) -> None:
         """Sign in with what the user typed; `io` relays any follow-up prompts."""

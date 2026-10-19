@@ -1,6 +1,6 @@
 """sure-itemizer: split merchant charges in Sure into the items they paid for.
 
-  itemizer serve           run on the RUN_TIMES schedule and serve the web UI (default)
+  itemizer serve           run on the SCHEDULE (cron) and serve the web UI (default)
   itemizer run             do one run now and exit
   itemizer login SOURCE    sign in to a merchant from the console (the web UI's Connect is easier)
   itemizer status          print what has been planned/applied
@@ -12,23 +12,15 @@ import getpass
 import logging
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from .config import Config
+from .cron import Cron
 from .notify import Notifier
 from .runner import Runner, login_flag
 from .sources import build_sources
 from .state import State
 from .sure import SureClient
-
-
-def next_run(now: datetime, times: tuple[str, ...]) -> datetime:
-    candidates = []
-    for t in times:
-        hh, mm = (int(x) for x in t.split(":"))
-        at = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
-        candidates.append(at if at > now else at + timedelta(days=1))
-    return min(candidates)
 
 
 class ConsoleIO:
@@ -81,8 +73,17 @@ def main(argv: list[str]) -> int:
             print(f"usage: itemizer login {{{','.join(by_name)}}}")
             return 2
         source = by_name[argv[1]]
-        fields = {f[0]: (getpass.getpass(f"{f[1]}: ") if f[2] == "password" else input(f"{f[1]}: "))
-                  for f in source.login_fields}
+        defaults = source.login_defaults()
+
+        def ask(name: str, label: str, kind) -> str:
+            if kind == "password":
+                return getpass.getpass(f"{label}: ")
+            if isinstance(kind, list):  # a choice: list it, Enter keeps the default
+                print(f"{label}: " + ", ".join(v for v, _ in kind))
+                return input(f"{label} [{defaults.get(name, kind[0][0])}]: ").strip() or defaults.get(name, kind[0][0])
+            return input(f"{label}: ")
+
+        fields = {f[0]: ask(*f[:3]) for f in source.login_fields}
         source.login(fields, ConsoleIO())
         notifier.clear(login_flag(source))
         print(f"{source.name}: signed in; session saved")
@@ -109,14 +110,15 @@ def main(argv: list[str]) -> int:
     log = logging.getLogger("itemizer")
     serve(cfg.web_port, state, runner, notifier, sources, cfg.dry_run, setup_error)
     log.info("mode: %s; sources: %s; schedule: %s", "DRY RUN" if cfg.dry_run else "LIVE",
-             ",".join(cfg.sources), ",".join(cfg.run_times))
+             ",".join(cfg.sources), cfg.schedule)
     if not sources:
         while True:  # nothing to do until the configuration is fixed and the container restarted
             time.sleep(3600)
     if cfg.run_on_start:
         _guarded(runner, log)
+    schedule = Cron(cfg.schedule)
     while True:
-        at = next_run(datetime.now(), cfg.run_times)
+        at = schedule.next_after(datetime.now())
         log.info("next run at %s", at)
         time.sleep(max(1, (at - datetime.now()).total_seconds()))
         _guarded(runner, log)

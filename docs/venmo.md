@@ -45,9 +45,3 @@ print('revoked' if r.ok else f'Venmo said {r.status_code}')
 ```
 
 Then choose **Disconnect** (or **Reconnect** to get a new token).
-
-## Settings
-
-| Variable | Default | |
-|---|---|---|
-| `VENMO_SURE_ACCOUNT` | — | Only look at this Sure account (its id, or part of its name) for Venmo |

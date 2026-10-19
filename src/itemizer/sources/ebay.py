@@ -122,14 +122,13 @@ class EbaySource(Source):
                   "container), so scheduled runs can read your orders. Leave them blank to reuse the saved ones. "
                   "Disconnect deletes them.")
 
-    def __init__(self, data_dir: Path, account_filter: str | None = None) -> None:
-        super().__init__(account_filter)
+    def __init__(self, data_dir: Path) -> None:
         self.data_dir = Path(data_dir)
         self._lock = threading.Lock()
 
     @classmethod
     def from_config(cls, cfg: Config) -> "EbaySource":
-        return cls(data_dir=cfg.data_dir / "ebay", account_filter=cfg.source_setting("EBAY", "SURE_ACCOUNT"))
+        return cls(data_dir=cfg.data_dir / "ebay")
 
     @property
     def auth_path(self) -> Path:

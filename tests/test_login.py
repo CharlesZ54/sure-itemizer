@@ -99,7 +99,7 @@ class FakeSure:
 
 def make_runner(tmp_path, source, apprise_url=None):
     cfg = Config(sure_url="http://sure", sure_api_key="k", dry_run=True, lookback_days=30,
-                 run_times=("07:30",), run_on_start=False, web_port=0, data_dir=tmp_path, sources=("shop",))
+                 run_on_start=False, web_port=0, data_dir=tmp_path, sources=("shop",))
     state = State(tmp_path / "t.db")
     notifier = Notifier(apprise_url, "http://nas:8686", state)
     return Runner(cfg, FakeSure(), [source], state, notifier), state, notifier
@@ -235,6 +235,36 @@ class TestAmazonSession:
     def test_requires_email_and_password(self, tmp_path):
         with pytest.raises(ValueError):
             AmazonSource(tmp_path / "amazon").login({"email": "", "password": ""}, None)
+
+    def test_site_is_chosen_on_the_connect_page_and_remembered(self, tmp_path):
+        source = AmazonSource(tmp_path / "amazon")
+        assert source.domain == "amazon.com"
+        source._save_domain("amazon.co.uk")
+        runner, state, notifier = make_runner(tmp_path, source)
+        server = serve(0, state, runner, notifier, [source], dry_run=True)
+        page = urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/connect/amazon").read().decode()
+        server.shutdown()
+        assert '<select id="domain" name="domain">' in page
+        assert '<option value="amazon.co.uk" selected>United Kingdom (amazon.co.uk)</option>' in page
+
+    def test_unknown_site_is_refused(self, tmp_path):
+        with pytest.raises(ValueError, match="unknown Amazon site"):
+            AmazonSource(tmp_path / "amazon").login({"domain": "amazon.example", "email": "a", "password": "b"}, None)
+
+    def test_a_failed_sign_in_keeps_the_previous_site(self, tmp_path, monkeypatch):
+        from itemizer.sources import amazon_browser
+
+        class Refused:
+            def __init__(self, session, io):
+                assert session.config.constants.BASE_URL == "https://www.amazon.ca"  # the chosen site
+                raise RuntimeError("no")
+
+        monkeypatch.setattr(amazon_browser, "HeadlessSignIn", Refused)
+        source = AmazonSource(tmp_path / "amazon")
+        source._save_domain("amazon.de")
+        with pytest.raises(RuntimeError):
+            source.login({"domain": "amazon.ca", "email": "a@example.com", "password": "b"}, None)
+        assert source.domain == "amazon.de"
 
 
 

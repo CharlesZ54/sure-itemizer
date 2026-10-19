@@ -368,9 +368,17 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
             if snap["state"] in ("running", "need_input"):
                 inner = '<div id="flow"></div>' + CONNECT_JS
             else:
+                defaults = source.login_defaults()
+
                 def field(f) -> str:
                     n, label, t = f[:3]
                     optional = len(f) > 3 and f[3]
+                    if isinstance(t, list):
+                        options = "".join(
+                            f'<option value="{html.escape(v)}"{" selected" if v == defaults.get(n) else ""}>'
+                            f'{html.escape(text)}</option>' for v, text in t)
+                        return (f'<label for="{n}">{html.escape(label)}</label>'
+                                f'<select id="{n}" name="{n}">{options}</select>')
                     auto = "username" if t == "email" else "current-password" if t == "password" else "off"
                     return (f'<label for="{n}">{html.escape(label)}</label>'
                             f'<input id="{n}" name="{n}" type="{t}" {"" if optional else "required"} '
