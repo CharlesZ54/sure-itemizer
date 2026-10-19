@@ -14,7 +14,7 @@ eBay's developer portal changes now and then. If a label below doesn't match exa
 
 ## 1. Join the eBay Developers Program
 
-1. Go to **https://developer.ebay.com** and choose **Sign in** → **Register** (or sign in if you already have a developer account).
+1. Go to **https://developer.ebay.com/signin**. Sign in if you already have a developer account; otherwise choose the option there to register for one.
 2. Fill in the form. A developer account is separate from your eBay buying account; using the same email is fine.
 3. Confirm your email. eBay reviews new developer accounts, which can take up to a business day. You'll get an email when it's approved.
 
