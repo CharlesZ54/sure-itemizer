@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 STATUS_ORDER = ["planned", "deferred", "applied", "already_split", "skipped", "unmatched", "error"]
 
 STYLE = """
-:root{--bg:#fff;--fg:#1d1d1f;--muted:#6e6e73;--line:#e5e5ea;--chip:#f2f2f7;--accent:#2f6fde;--ok:#1e8e3e;--warn:#b26a00;--bad:#c5221f}
+:root{color-scheme:light dark;--bg:#fff;--fg:#1d1d1f;--muted:#6e6e73;--line:#e5e5ea;--chip:#f2f2f7;--accent:#2f6fde;--ok:#1e8e3e;--warn:#b26a00;--bad:#c5221f}
 @media (prefers-color-scheme:dark){:root{--bg:#151517;--fg:#ececf1;--muted:#9a9aa3;--line:#2c2c31;--chip:#232328;--accent:#7aa7ff;--ok:#5bd17a;--warn:#f0b450;--bad:#ff7b72}}
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif;margin:0;padding:16px}
@@ -34,7 +34,8 @@ ul{margin:0;padding-left:16px} .wrap{overflow-x:auto}
 button,input,select{font:inherit;color:var(--fg)}
 button{padding:5px 12px;border-radius:8px;border:1px solid var(--line);background:var(--chip);cursor:pointer}
 button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
-input{padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--bg);width:100%;max-width:340px}
+input,select{padding:7px 9px;border-radius:8px;border:1px solid var(--line);background:var(--bg);width:100%;max-width:340px}
+option{background:var(--bg);color:var(--fg)}
 label{display:block;margin:10px 0 4px;font-weight:600}
 .card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;margin:8px 0;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 .card .grow{flex:1;min-width:200px} form.inline{display:inline}
