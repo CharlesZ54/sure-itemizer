@@ -32,7 +32,7 @@ class WebIO:
             self.flow._message(msg.strip())
 
     def prompt(self, msg: str, type: Any = None, **kwargs: Any) -> Any:
-        answer = self.flow._ask(msg, kwargs.get("choices") or [], kwargs.get("img_url"))
+        answer = self.flow._ask(msg, kwargs.get("choices") or [], kwargs.get("img_url"), kwargs.get("link"))
         return type(answer) if type else answer
 
     def handoff(self, context: Any, pages: list, reason: str, until: Callable[[Any], bool]) -> None:
@@ -77,10 +77,10 @@ class LoginFlow:
         with self.lock:
             self.messages.append(msg)
 
-    def _ask(self, msg: str, choices: list[str], img_url: str | None) -> str:
+    def _ask(self, msg: str, choices: list[str], img_url: str | None, link: str | None = None) -> str:
         with self.lock:
             self.state = "need_input"
-            self.prompt = {"message": msg, "choices": list(choices), "image": img_url}
+            self.prompt = {"message": msg, "choices": list(choices), "image": img_url, "link": link}
         try:
             answer = self._answers.get(timeout=PROMPT_TIMEOUT)
         except queue.Empty:

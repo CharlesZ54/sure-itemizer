@@ -18,6 +18,12 @@ def _target(cfg: Config) -> Source:
     return TargetSource.from_config(cfg)
 
 
+def _ebay(cfg: Config) -> Source:
+    from .ebay import EbaySource
+
+    return EbaySource.from_config(cfg)
+
+
 def _venmo(cfg: Config) -> Source:
     from .venmo import VenmoSource
 
@@ -29,6 +35,7 @@ REGISTRY: dict[str, Callable[[Config], Source]] = {
     "amazon": _amazon,
     "target": _target,
     "venmo": _venmo,
+    "ebay": _ebay,
 }
 
 

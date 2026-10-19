@@ -10,7 +10,8 @@ def match(txns: list[SureTxn], purchases: list[Purchase],
     A pair needs the exact same signed amount and a bank date between
     `window[0]` days before and `window[1]` days after the merchant's date.
     Closest dates win, so two same-priced charges a week apart each find
-    their own transaction.
+    their own transaction. A bank line that quotes the merchant's order number
+    (eBay's do) goes to that order first.
     """
     before, after = window
     candidates = []
@@ -20,9 +21,10 @@ def match(txns: list[SureTxn], purchases: list[Purchase],
                 continue
             delta = (t.date - p.date).days
             if -before <= delta <= after:
-                candidates.append((abs(delta), t.date, p.date, t.id, p.external_id, t, p))
+                quoted = 0 if p.reference and p.reference in t.name else 1
+                candidates.append((quoted, abs(delta), t.date, p.date, t.id, p.external_id, t, p))
 
-    candidates.sort(key=lambda c: c[:5])
+    candidates.sort(key=lambda c: c[:6])
     used_t: set[str] = set()
     used_p: set[str] = set()
     pairs = []

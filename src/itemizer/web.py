@@ -132,6 +132,7 @@ async function poll(){
   else if (s.state === "need_input") {
     const p = s.prompt;
     h += `<form id="ans"><label>${esc(p.message)}</label>`;
+    if (p.link) h += `<p><a href="${esc(p.link)}" target="_blank" rel="noopener"><button type="button" class="primary">Open the sign-in page ↗</button></a></p>`;
     if (p.image) h += `<p><img src="${esc(p.image)}" alt="captcha" style="max-width:100%"></p>`;
     if (p.choices.length) {
       h += p.choices.map((c,i) => `<div><label style="font-weight:400"><input type="radio" name="value" value="${i+1}" ${i==0?"checked":""} style="width:auto"> ${esc(c.replace(/^\\d+:\\s*/,""))}</label></div>`).join("");
@@ -379,9 +380,11 @@ def make_handler(state: State, runner: Runner, notifier: Notifier, sources: list
                 if source.help_url:
                     fields = (f'<p><a href="{html.escape(source.help_url)}" target="_blank" rel="noopener">'
                               f'How to get these →</a></p>') + fields
+                note = html.escape(source.login_note) if source.login_note else (
+                    f"Used once to sign in, then discarded. Only the session {title} issues is kept. "
+                    f"If {title} asks for a verification code, you'll be prompted here.")
                 inner = (f'<form method="post">{fields}<p><button class="primary">Sign in</button></p></form>'
-                         f'<p class="muted">Used once to sign in, then discarded. Only the session {title} issues '
-                         f'is kept. If {title} asks for a verification code, you\'ll be prompted here.</p>')
+                         f'<p class="muted">{note}</p>')
                 if source.name in lives:
                     inner += (f'<p><a href="{source.name}/live">Or sign in yourself on {title}\'s own page, '
                               f'in a live browser view →</a></p>')

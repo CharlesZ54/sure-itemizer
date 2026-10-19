@@ -49,6 +49,8 @@ class Source(ABC):
     #: an optional fourth element True for a field that may be left empty.
     #: Empty means the source needs no interactive login.
     login_fields: list[tuple] = []
+    #: Shown under the Connect form instead of the default "used once, then discarded".
+    login_note: str | None = None
 
     def __init__(self, account_filter: str | None = None) -> None:
         # Sure account id, or a case-insensitive substring of its name.

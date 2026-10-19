@@ -53,6 +53,14 @@ Only the browser's session is kept (`/data/target/state.json`, mode 600). Target
 
 The live view is also available on its own from either Connect page (*Or sign in yourself…*).
 
+## Connecting eBay
+
+eBay charges are split into the items in the order, like Amazon's. The bank line quotes eBay's order number (`EBAY O*12-34567-89012`), so each charge goes to its own order.
+
+**Step-by-step: [docs/ebay.md](docs/ebay.md).** eBay only opens its API to registered developers, so this needs a free eBay developer account and a production keyset of your own: you paste its **App ID**, **Cert ID** and **RuName** into **Integrations → eBay → Connect**, approve access on eBay's page, and paste back the address eBay sends you to. The keys and eBay's refresh token (about 18 months) are kept in `/data/ebay/auth.json`, mode 600.
+
+Orders come from the Trading API's `GetOrders` as a buyer, which covers the last 90 days. Shipping and tax are spread over the items by price. A refund of a whole order, or on a single-item order, is split the same way; a partial refund on a multi-item order is only renamed, since eBay doesn't say which item it was for. Orders paid with PayPal show up in the bank as PayPal and aren't matched.
+
 ## Connecting Venmo
 
 Payments are renamed, with the bank's original text kept in the notes. Cash-outs are split into the payments behind them.
@@ -86,7 +94,7 @@ You'll hear about it when a merchant needs you to sign in again, and when a run 
 | `SURE_URL` | — | e.g. `http://192.168.1.10:3000` |
 | `SURE_API_KEY` | — | `read_write` scope |
 | `DRY_RUN` | `true` | Plan and show what *would* change; write nothing |
-| `SOURCES` | `amazon` | Comma-separated |
+| `SOURCES` | `amazon` | Comma-separated: `amazon`, `target`, `venmo`, `ebay` |
 | `LOOKBACK_DAYS` | `30` | How far back to look for unprocessed transactions |
 | `RUN_TIMES` | `07:30` | Comma-separated local times (`TZ`) |
 | `RUN_ON_START` | `true` | |
@@ -96,6 +104,7 @@ You'll hear about it when a merchant needs you to sign in again, and when a run 
 | `AMZN_DOMAIN` | `amazon.com` | Other Amazon marketplaces are untested |
 | `TARGET_SURE_ACCOUNT` | — | Only look at this Sure account for Target |
 | `VENMO_SURE_ACCOUNT` | — | Only look at this Sure account for Venmo |
+| `EBAY_SURE_ACCOUNT` | — | Only look at this Sure account for eBay |
 
 The Amazon variables are `AMZN_*`, not `AMAZON_*`, because the `amazon-orders` library reads every `AMAZON_*` variable as its own setting.
 
