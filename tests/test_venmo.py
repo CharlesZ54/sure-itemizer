@@ -225,6 +225,10 @@ class FakeVenmo:
         self.base = f"http://127.0.0.1:{self.server.server_port}/v1"
 
 
+def connect(source):
+    source.login({"username": "me@example.com", "password": "pw", "device_id": "TRUSTED-V-ID"}, CodeIO("123456"))
+
+
 class CodeIO:
     def __init__(self, code):
         self.code, self.prompts = code, []
@@ -244,7 +248,7 @@ def venmo(monkeypatch, tmp_path):
 def test_sign_in_with_texted_code_saves_only_the_token(venmo):
     fake, source = venmo
     io = CodeIO("123 456")
-    source.login({"username": "me@example.com", "password": "pw", "device_id": "TRUSTED-V-ID", "token": ""}, io)
+    source.login({"username": "me@example.com", "password": "pw", "device_id": "TRUSTED-V-ID"}, io)
     assert io.prompts == ["Enter the code Venmo texted you"]
     paths = [c[1].split("?")[0] for c in fake.calls]
     assert paths == ["/v1/oauth/access_token", "/v1/account/two-factor/token", "/v1/oauth/access_token",
@@ -260,22 +264,13 @@ def test_sign_in_with_texted_code_saves_only_the_token(venmo):
 def test_wrong_password_is_reported(venmo):
     _, source = venmo
     with pytest.raises(venmo_api.VenmoAuthError, match="password is incorrect"):
-        source.login({"username": "me@example.com", "password": "nope", "device_id": "V", "token": ""}, CodeIO("1"))
+        source.login({"username": "me@example.com", "password": "nope", "device_id": "V"}, CodeIO("1"))
     assert not source.connected()
-
-
-def test_pasting_a_token_works_and_bad_ones_are_refused(venmo):
-    fake, source = venmo
-    with pytest.raises(venmo_api.VenmoAuthError):
-        source.login({"token": "wrong"}, None)
-    assert not source.connected()
-    source.login({"token": "Bearer tok-123"}, None)
-    assert source.connected()
 
 
 def test_fetch_describes_payments_and_cash_outs(venmo):
     _, source = venmo
-    source.login({"token": "tok-123"}, None)
+    connect(source)
     pull = lambda tid, d, cents: SureTxn(tid, d, cents, "VENMO PAYMENT", None, "a", "Chk", None)  # noqa: E731
     bank = [pull("b1", date(2026, 10, 2), 2150), pull("b4", date(2026, 10, 8), 8800)]
     got = {p.external_id: p for p in source.fetch(date(2026, 9, 20), txns=bank)}
@@ -288,7 +283,7 @@ def test_fetch_describes_payments_and_cash_outs(venmo):
 
 def test_a_rejected_token_means_sign_in_again(venmo):
     fake, source = venmo
-    source.login({"token": "tok-123"}, None)
+    connect(source)
     fake.token = "revoked-now"
     with pytest.raises(LoginRequired, match="rejected the token"):
         source.fetch(date(2026, 9, 20))
@@ -297,7 +292,7 @@ def test_a_rejected_token_means_sign_in_again(venmo):
 def test_no_password_sign_in_without_a_trusted_device(venmo):
     fake, source = venmo
     with pytest.raises(ValueError, match="device it already trusts"):
-        source.login({"username": "me@example.com", "password": "pw", "device_id": "", "token": ""}, CodeIO("1"))
+        source.login({"username": "me@example.com", "password": "pw", "device_id": ""}, CodeIO("1"))
     assert fake.calls == []  # never even tried: failed attempts can lock the account
 
 
@@ -317,13 +312,13 @@ def test_connect_page_links_the_venmo_guide(tmp_path):
     server = serve(0, state, Runner(cfg, None, [source], state), Notifier(None, None, state), [source], True)
     page = urllib.request.urlopen(f"http://127.0.0.1:{server.server_port}/connect/venmo").read().decode()
     assert 'href="https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/venmo.md"' in page
-    assert 'name="device_id"' in page and 'name="token"' in page
+    assert 'name="device_id"' in page and 'name="token"' not in page
     server.shutdown()
 
 
 def test_a_cash_out_just_inside_the_lookback_still_names_earlier_payments(venmo):
     _, source = venmo
-    source.login({"token": "tok-123"}, None)
+    connect(source)
     got = {p.external_id: p for p in source.fetch(date(2026, 10, 4))}
     assert {"902"} <= set(got) and "901" not in got
     assert parts(got["902"]) == [("Venmo from Alex Doe: tickets", -2500)]  # paid 10-03, before the lookback

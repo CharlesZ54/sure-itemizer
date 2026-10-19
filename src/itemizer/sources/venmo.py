@@ -8,7 +8,7 @@ difference (money left in, or taken from, the balance) gets a line of its own,
 so the parts always add up to the cash-out.
 
 Data comes from Venmo's (unofficial) mobile API with a token from signing in
-on the Connect page (password + texted code) or pasted there. Venmo's own
+on the Connect page (password, trusted device ID, texted code). Venmo's own
 statement CSVs dropped into /data/venmo/statements/ are read too.
 """
 from __future__ import annotations
@@ -234,12 +234,12 @@ class VenmoSource(Source):
     date_window = (1, 5)
     help_url = "https://github.com/CharlesZ54/sure-itemizer/blob/main/docs/venmo.md"
     login_fields = [
-        ("username", "Venmo email or phone", "text", True),
-        ("password", "Venmo password", "password", True),
+        ("username", "Venmo email or phone", "text"),
+        ("password", "Venmo password", "password"),
         # Venmo refuses (and counts against you) sign-ins from devices it doesn't
         # know: github.com/mmohades/Venmo/issues/86. A browser's v_id cookie is one.
+        # Optional only when reconnecting: the saved one is reused.
         ("device_id", "Trusted device ID: the v_id cookie from a browser signed in to Venmo", "text", True),
-        ("token", "…or instead, paste a Venmo access token", "password", True),
     ]
 
     def __init__(self, data_dir: Path, account_filter: str | None = None) -> None:
@@ -279,7 +279,6 @@ class VenmoSource(Source):
         return VenmoClient(token=saved.get("token"), device_id=saved.get("device_id"))
 
     def login(self, fields: dict[str, str], io) -> None:
-        token = (fields.get("token") or "").strip()
         username, password = (fields.get("username") or "").strip(), fields.get("password") or ""
         trusted = (fields.get("device_id") or "").strip()
         with self._lock:
@@ -287,29 +286,26 @@ class VenmoSource(Source):
             if not device and self.auth_path.exists():
                 device = json.loads(self.auth_path.read_text()).get("device_id")
             client = VenmoClient(device_id=device)
-            if token:
-                client.set_token(token)
-            elif username and password:
-                if not device:
-                    # A made-up device id gets "Unable to complete your request",
-                    # and repeated tries can lock the account. Don't try.
-                    raise ValueError("Venmo only accepts sign-ins from a device it already trusts. Enter the "
-                                     "v_id cookie of a browser you've signed in to Venmo with (or paste a token).")
-                secret = client.start_login(username, password)
-                if secret:
-                    client.send_code(secret)
-                    code = io.prompt("Enter the code Venmo texted you")
-                    client.finish_login(re.sub(r"\s", "", code), secret)
-                    client.trust_device()
-            else:
-                raise ValueError("enter your Venmo email/phone and password, or paste an access token")
+            if not (username and password):
+                raise ValueError("enter your Venmo email or phone, and password")
+            if not device:
+                # A made-up device id gets "Unable to complete your request",
+                # and repeated tries can lock the account. Don't try.
+                raise ValueError("Venmo only accepts sign-ins from a device it already trusts. Enter the "
+                                 "v_id cookie of a browser you've signed in to Venmo with.")
+            secret = client.start_login(username, password)
+            if secret:
+                client.send_code(secret)
+                code = io.prompt("Enter the code Venmo texted you")
+                client.finish_login(re.sub(r"\s", "", code), secret)
+                client.trust_device()
             me = client.me()  # proves the token works before anything is saved
             self._save(client)
         log.info("venmo: connected as %s", me.get("username") or "your account")
 
     def logout(self) -> None:
-        # Only forgets the token here; revoking it is up to the user (Venmo's
-        # security settings), so a token shared with another tool keeps working.
+        # Only forgets the token here; Venmo keeps it valid until it's revoked
+        # (see docs/venmo.md).
         self.auth_path.unlink(missing_ok=True)
 
     # Fetching -----------------------------------------------------------
